@@ -1,0 +1,45 @@
+# Entorno
+.env
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Datos descargados (NO se suben al repo: son GB)
+datos/bronze/
+datos/*.parquet
+datos/yellow_2020_*.csv
+datos/_checkpoint.json
+
+# La muestra de 1000 filas SÍ se sube: es la semilla del simulador
+!datos/muestra_1000.csv
+
+# Volúmenes y artefactos de Docker
+volumenes/
+logs/
+
+# Airflow
+airflow/logs/
+airflow/airflow.db
+airflow/airflow.cfg
+airflow/webserver_config.py
+airflow/standalone_admin_password.txt
+
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log
+
+# Editores
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Restos de la primera versión (E5+E8). No van al repo.
+_viejo/

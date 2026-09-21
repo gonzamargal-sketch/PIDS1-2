@@ -1,0 +1,39 @@
+# ============================================================
+# Dependencias para desarrollo local (fuera de Docker)
+#
+# Requiere Python 3.11 o superior. Probado en 3.11 y 3.14.
+#
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements-dev.txt
+#
+# Las versiones van fijadas por el mismo motivo que las imágenes de
+# Docker: que los cuatro tengamos exactamente el mismo entorno y que
+# lo que funciona hoy siga funcionando dentro de tres semanas.
+#
+# Si alguien las sube, que compruebe antes que las dos pruebas siguen
+# pasando: pandas 3.x trae cambios de ruptura frente al 2.x.
+# ============================================================
+
+# Datos
+pandas==3.0.6
+pyarrow==25.0.1
+
+# PostgreSQL
+psycopg2-binary==2.9.13
+SQLAlchemy==2.0.54        # lo usa el catálogo SQL de Iceberg
+
+# Iceberg (tier frío)
+pyiceberg==0.12.0
+# pyiceberg-core es OBLIGATORIO: sin él, escribir en una tabla
+# particionada falla con NotInstalledError. PyIceberg lo deja como extra
+# y no se ve venir hasta el primer append.
+pyiceberg-core==0.10.1
+
+# MinIO / S3
+boto3==1.43.98
+s3fs==2025.9.0
+
+# Varios
+requests==2.33.1
+python-dotenv==1.2.2

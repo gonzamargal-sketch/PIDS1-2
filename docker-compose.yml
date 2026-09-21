@@ -1,0 +1,223 @@
+# ============================================================
+# PIDS Parte 2 — Infraestructura de datos
+# Escenario E8: Retención y ciclo de vida
+#
+# PERFILES: nadie necesita levantarlo todo para trabajar en lo suyo.
+#
+#   core    Postgres + MinIO + Redis + API      (~1,5 GB)  siempre
+#   stream  Kafka + Spark Streaming + simulador (~2,7 GB)
+#   orch    Airflow                             (~0,8 GB)
+#   viz     Grafana                             (~0,3 GB)
+#
+#   docker compose --profile core up -d
+#   docker compose --profile core --profile stream up -d
+#   docker compose --profile "*" up -d        # todo (integración y vídeo)
+#
+# Con 8 GB de RAM hay que configurar %UserProfile%\.wslconfig:
+#   [wsl2]
+#   memory=6GB
+#   processors=4
+#   swap=4GB
+# ============================================================
+
+name: pids-parte2
+
+x-comun: &comun
+  restart: unless-stopped
+  networks: [pids]
+
+services:
+
+  # ══════════════════════════════════════════════════════════
+  # CORE
+  # ══════════════════════════════════════════════════════════
+
+  postgres:
+    <<: *comun
+    image: postgres:16-alpine
+    container_name: pids_postgres
+    profiles: [core, stream, orch, viz]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pids}
+      POSTGRES_USER: ${POSTGRES_USER:-pids}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pids_dev_2026}
+      # Para que las fechas se muestren en ISO y no en formato local
+      PGTZ: UTC
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_connections=100
+      # Necesario para que DROP de particiones no espere a sesiones colgadas
+      - -c
+      - idle_in_transaction_session_timeout=60000
+    ports:
+      - "${POSTGRES_PORT_HOST:-5432}:5432"
+    volumes:
+      - postgres_datos:/var/lib/postgresql/data
+      # Los .sql se ejecutan en orden alfabético la PRIMERA vez que arranca.
+      # Si cambiáis el esquema: docker compose down -v && docker compose up -d
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pids} -d ${POSTGRES_DB:-pids}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 768m
+
+  # MinIO archivó su edición community en 2026 y las imágenes minio/minio y
+  # minio/mc desaparecieron de Docker Hub (404). Se tira de quay.io, que es
+  # el registro propio de MinIO.
+  #
+  # VERSIÓN FIJADA A PROPÓSITO, no uséis :latest. En RELEASE.2025-05-24
+  # ("Breaking Release") quitaron la consola web embebida. Esta es la última
+  # que conserva el navegador de objetos completo, que es lo que se enseña
+  # en el vídeo.
+  minio:
+    <<: *comun
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: pids_minio
+    profiles: [core, stream, orch, viz]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_2026}
+    ports:
+      - "${MINIO_PORT_HOST:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT_HOST:-9001}:9001"
+    volumes:
+      - minio_datos:/data
+    # El healthcheck usa el endpoint HTTP en vez del binario mc, que ya no
+    # está garantizado dentro de la imagen.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 640m
+
+  # Crea los buckets y termina. Es normal que aparezca como "exited (0)".
+  #
+  # Usa el cliente de AWS en vez de `mc`: hace exactamente lo mismo contra la
+  # API S3 y no depende de MinIO, que ya no publica imágenes mantenidas.
+  minio-init:
+    image: amazon/aws-cli:2.22.35
+    container_name: pids_minio_init
+    profiles: [core, stream, orch, viz]
+    networks: [pids]
+    depends_on:
+      minio: {condition: service_healthy}
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin_dev_2026}
+      AWS_DEFAULT_REGION: us-east-1
+    entrypoint: >
+      /bin/sh -c "
+        aws --endpoint-url http://minio:9000 s3 mb s3://${MINIO_BUCKET_BRONZE:-bronze} 2>/dev/null;
+        aws --endpoint-url http://minio:9000 s3 mb s3://${MINIO_BUCKET_LAKEHOUSE:-lakehouse} 2>/dev/null;
+        echo '>>> Buckets disponibles:';
+        aws --endpoint-url http://minio:9000 s3 ls
+      "
+
+  redis:
+    <<: *comun
+    image: redis:7-alpine
+    container_name: pids_redis
+    profiles: [core, stream, orch, viz]
+    command:
+      - redis-server
+      - --maxmemory
+      - 200mb
+      # Expulsa las claves con TTL más próximo cuando se llena.
+      # Es coherente con E8: el caché también tiene ciclo de vida.
+      - --maxmemory-policy
+      - volatile-ttl
+      - --appendonly
+      - "no"
+    ports:
+      - "${REDIS_PORT_HOST:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    mem_limit: 320m
+
+  # ── API: se añade en el paso 5 (P3) ──────────────────────
+  # api:
+  #   <<: *comun
+  #   build: ./api
+  #   container_name: pids_api
+  #   profiles: [core, stream, orch, viz]
+  #   depends_on:
+  #     postgres: {condition: service_healthy}
+  #     redis:    {condition: service_healthy}
+  #     minio:    {condition: service_healthy}
+  #   env_file: .env
+  #   ports: ["${API_PORT_HOST:-8000}:8000"]
+  #   volumes: ["./api:/app", "./common:/app/common:ro"]
+  #   mem_limit: 384m
+
+  # ══════════════════════════════════════════════════════════
+  # STREAM  (P2)  — se rellena en la semana 2
+  # ══════════════════════════════════════════════════════════
+
+  kafka:
+    <<: *comun
+    image: apache/kafka:3.9.0
+    container_name: pids_kafka
+    profiles: [stream]
+    environment:
+      # Modo KRaft: sin Zookeeper, un solo contenedor
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT_HOST:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+    ports:
+      - "${KAFKA_PORT_HOST:-9092}:29092"
+    volumes:
+      - kafka_datos:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    mem_limit: 1200m
+
+  # simulador:   ./simulador   (P2, paso 6)
+  # spark-stream: ./ingesta    (P2, paso 7)
+
+  # ══════════════════════════════════════════════════════════
+  # ORCH  (P4)  — se rellena en la semana 2
+  # ══════════════════════════════════════════════════════════
+  # airflow:     ./airflow     (paso 9)
+
+  # ══════════════════════════════════════════════════════════
+  # VIZ  (P4)  — se rellena en la semana 3
+  # ══════════════════════════════════════════════════════════
+  # grafana:     ./grafana     (paso 11)
+
+volumes:
+  postgres_datos:
+  minio_datos:
+  kafka_datos:
+
+networks:
+  pids:
+    driver: bridge
