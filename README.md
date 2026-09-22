@@ -35,6 +35,33 @@ muestra, las pasa por el contrato de datos, las inserta, y ejercita la máquina
 de estados del archivado incluida la comprobación de que **no se puede
 desalojar una partición sin haberla verificado antes**.
 
+> **La prueba de humo limpia antes de empezar.** Borra lo que ella misma
+> escribe —`taxi_trips` con sus particiones diarias, `trips_cuarentena`,
+> `archival_jobs` y `query_log`— y no toca `retention_policy` ni `cold_stats`.
+> Sin eso solo pasaría la primera vez: afirma conteos absolutos, y la partición
+> que elige podría venir ya en `VERIFICADO` de la vez anterior, con lo que la
+> comprobación que de verdad importa se saltaría en silencio. Si necesitáis
+> conservar lo que haya, `--no-limpiar`.
+
+Y con eso ya se puede poblar el tier frío de punta a punta:
+
+```bash
+python ingesta/subir_bronze.py      # paso 4: CSV crudo → MinIO (bronze)
+python ingesta/carga_inicial.py     # paso 5: bronze → contrato → Iceberg
+```
+
+Con la muestra de 1.000 filas, los tres comandos dejan esto. Si vuestros
+números no cuadran, algo está mal montado:
+
+| Comando | Qué tiene que salir |
+|---|---|
+| `scripts/prueba_humo.py` | `TODO CORRECTO`. 998 válidas, 1 rechazada por `cronologia_invalida`, 50 con avisos |
+| `ingesta/subir_bronze.py` | `1 objetos` en `s3://bronze/nyc-taxi/2020/` (97.749 B) |
+| `ingesta/carga_inicial.py` | `998 filas, 2 ficheros, 2 particiones` en `lakehouse.trips`, ~66 B/fila |
+
+Las dos particiones son `event_month=2019-12` y `event_month=2020-01`: la
+muestra cruza el fin de año, y eso confirma que la partición mensual funciona.
+
 Servicios levantados:
 
 | Servicio | URL | Credenciales |
@@ -215,6 +242,18 @@ Para probar sin bajarse nada, con las mil filas de muestra:
 python ingesta/carga_inicial.py --local datos/muestra_1000.csv --recrear
 ```
 
+**`carga_inicial.py` no es idempotente: cada pasada hace `append`.** Lanzarlo
+dos veces deja 1.996 filas donde debería haber 998, y nada avisa. Es coherente
+con lo que es —una carga, no una sincronización—, pero si repetís, `--recrear`.
+
+Y `--recrear` **deja huérfanos**: el `drop_table` de PyIceberg quita la entrada
+del catálogo pero no borra los Parquet de MinIO. Tras unas cuantas pruebas
+tendréis ficheros en el bucket que la tabla ya no referencia (8 ficheros para
+una tabla de 2, por ejemplo). No rompe nada, pero **no midáis el tamaño del
+tier frío con `mc ls` ni desde la consola de MinIO**: usad
+`lakehouse.estadisticas()`, que lee los manifiestos y solo cuenta lo vivo. Si
+no, el ratio de compresión de la memoria saldrá inflado por basura muerta.
+
 **La carga inicial va directa al frío y no pasa por PostgreSQL.** Los datos son
 de 2020 y estamos en 2026: por `event_time` son históricos por definición, así
 que no tiene sentido meterlos en el caliente para archivarlos acto seguido. Eso
@@ -339,6 +378,22 @@ fallase, habría que cambiar de almacén S3 (SeaweedFS o Garage son los
 candidatos). Avisad al grupo antes de tocarlo: cambia el paso 5 y la carga a
 Iceberg.
 
+### `ResolutionImpossible` al hacer pip install
+
+Si alguien añade **`s3fs`** a `requirements-dev.txt`, la instalación deja de
+resolver y pip escupe cincuenta líneas de versiones de `aiobotocore`.
+
+`s3fs` arrastra `aiobotocore`, que fija `botocore` a un rango siempre por
+detrás del que pide `boto3`: hoy la última versión de `aiobotocore` admite
+`botocore<1.43.76` y `boto3==1.43.98` exige `botocore>=1.43.98`. **No hay
+ninguna combinación de versiones que funcione**, así que no perdáis la tarde
+ajustando pines.
+
+No hace falta: no se importa en ninguna parte del proyecto, y PyIceberg habla
+con MinIO por el FileIO de **PyArrow**, no por fsspec. Si algún día hace falta
+acceso S3 por fsspec, hay que desfijar `boto3` y aceptar la versión que
+`aiobotocore` permita, decidiéndolo entre todos.
+
 ### `pg_config executable not found` al hacer pip install
 
 Pip está intentando compilar `psycopg2-binary` desde el código fuente porque
@@ -358,6 +413,23 @@ cambiar de intérprete. Si de verdad no existe wheel, entonces sí hace falta un
 Python anterior. **Avisad al grupo antes de tocar los pines**: si sube uno, los
 demás tienen que rehacer su venv, y `pandas` 3.x tiene cambios de ruptura
 frente al 2.x, así que quien los suba pasa la prueba de humo antes de commitear.
+
+### `could not translate host name "postgres"` al correr los scripts
+
+Os pasará en cuanto alguien haga `export $(cat .env | xargs)` o añada un
+`load_dotenv()` a `common/config.py`.
+
+`.env` está escrito **para Docker**: ahí dentro `POSTGRES_HOST=postgres` y
+`MINIO_ENDPOINT=minio:9000` son los nombres de servicio de la red de Compose.
+Desde vuestra máquina esos nombres no resuelven. Los scripts funcionan hoy
+porque `common/config.py` **no lee `.env`**: usa sus propios valores por
+defecto, que apuntan a `localhost`, y los puertos están publicados en el host.
+
+O sea que `python-dotenv` está en las dependencias pero nadie lo llama, y eso
+es deliberado. **Si añadís `load_dotenv()`, rompéis los tres comandos desde el
+host** y tendréis que pasar a ejecutarlos dentro de un contenedor o mantener un
+`.env` distinto para local. Si de verdad hace falta, habladlo antes: afecta a
+los cuatro.
 
 ### `port is already allocated`
 
