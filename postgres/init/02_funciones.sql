@@ -243,8 +243,7 @@ SELECT
     ROUND(AVG(latencia_ms), 1)                                        AS media_ms,
     ROUND((PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY latencia_ms))::NUMERIC, 1) AS p50_ms,
     ROUND((PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latencia_ms))::NUMERIC, 1) AS p95_ms,
-    ROUND((PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latencia_ms))::NUMERIC, 1) AS p99_ms,
-    ROUND(100.0 * COUNT(*) FILTER (WHERE cache_hit) / COUNT(*), 1)    AS pct_cache_hit
+    ROUND((PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latencia_ms))::NUMERIC, 1) AS p99_ms
 FROM query_log
 WHERE ocurrido_en > NOW() - INTERVAL '24 hours'
 GROUP BY data_source;

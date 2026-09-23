@@ -12,10 +12,7 @@ VALUES
      'Los viajes salen de PostgreSQL a Iceberg a los 30 días de su event_time.'),
 
     ('trips',   'cold',  NULL,    7, 'years',   'DELETE',
-     'Borrado definitivo del histórico pasados 7 años. Cierra el ciclo de vida.'),
-
-    ('metrics', 'redis', NULL,   24, 'hours',   'EXPIRE',
-     'Las métricas cacheadas expiran por TTL nativo de Redis.');
+     'Borrado definitivo del histórico pasados 7 años. Cierra el ciclo de vida.');
 
 -- ── Particiones iniciales ───────────────────────────────────
 -- De ayer a dentro de una semana, para que la primera inserción no caiga

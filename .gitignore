@@ -27,11 +27,6 @@ airflow/airflow.cfg
 airflow/webserver_config.py
 airflow/standalone_admin_password.txt
 
-# Spark
-spark-warehouse/
-metastore_db/
-derby.log
-
 # Editores
 .vscode/
 .idea/

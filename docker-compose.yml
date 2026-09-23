@@ -4,10 +4,13 @@
 #
 # PERFILES: nadie necesita levantarlo todo para trabajar en lo suyo.
 #
-#   core    Postgres + MinIO + Redis + API      (~1,5 GB)  siempre
-#   stream  Kafka + Spark Streaming + simulador (~2,7 GB)
+#   core    Postgres + MinIO + API              (~1,3 GB)  siempre
+#   stream  Kafka + consumidor + simulador      (~1,3 GB)
 #   orch    Airflow                             (~0,8 GB)
 #   viz     Grafana                             (~0,3 GB)
+#
+# Fase 1: los datos viven solo en PostgreSQL (caliente) y MinIO/Iceberg
+# (bronze y frío). Entran por Kafka y los mueve Airflow. Sin Redis ni Spark.
 #
 #   docker compose --profile core up -d
 #   docker compose --profile core --profile stream up -d
@@ -124,31 +127,7 @@ services:
         aws --endpoint-url http://minio:9000 s3 ls
       "
 
-  redis:
-    <<: *comun
-    image: redis:7-alpine
-    container_name: pids_redis
-    profiles: [core, stream, orch, viz]
-    command:
-      - redis-server
-      - --maxmemory
-      - 200mb
-      # Expulsa las claves con TTL más próximo cuando se llena.
-      # Es coherente con E8: el caché también tiene ciclo de vida.
-      - --maxmemory-policy
-      - volatile-ttl
-      - --appendonly
-      - "no"
-    ports:
-      - "${REDIS_PORT_HOST:-6379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    mem_limit: 320m
-
-  # ── API: se añade en el paso 5 (P3) ──────────────────────
+  # ── API: se añade en el paso 10 (P3) ─────────────────────
   # api:
   #   <<: *comun
   #   build: ./api
@@ -156,7 +135,6 @@ services:
   #   profiles: [core, stream, orch, viz]
   #   depends_on:
   #     postgres: {condition: service_healthy}
-  #     redis:    {condition: service_healthy}
   #     minio:    {condition: service_healthy}
   #   env_file: .env
   #   ports: ["${API_PORT_HOST:-8000}:8000"]
@@ -201,7 +179,7 @@ services:
     mem_limit: 1200m
 
   # simulador:   ./simulador   (P2, paso 6)
-  # spark-stream: ./ingesta    (P2, paso 7)
+  # consumidor:  ./ingesta     (P2, paso 7)  consumidor_kafka.py
 
   # ══════════════════════════════════════════════════════════
   # ORCH  (P4)  — se rellena en la semana 2

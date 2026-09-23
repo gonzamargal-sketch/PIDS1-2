@@ -3,9 +3,13 @@
 Escenario **E8: Retención y ciclo de vida de los datos**, sobre el dataset
 NYC Yellow Taxi 2020.
 
-La arquitectura y el reparto están en [`ARQUITECTURA.md`](ARQUITECTURA.md).
-Antes de tocar código, leed al menos las secciones 3.1, 3.2 y 3.3: condicionan
-lo que escribe cada uno.
+Toda la documentación está en [`docs/`](docs/): el diseño en
+[`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md), el reparto por bloques en
+[`docs/REPARTO.md`](docs/REPARTO.md) y las tareas pendientes, ya troceadas para
+poder trabajar los cuatro a la vez, en [`docs/TAREAS.md`](docs/TAREAS.md).
+
+Antes de tocar código, leed al menos las secciones 3.1, 3.2 y 3.3 de la
+arquitectura: condicionan lo que escribe cada uno.
 
 ---
 
@@ -18,7 +22,8 @@ tiers los hace **Airflow**. No hay Redis ni Spark.
 
 **Fase 2 — opcional, en principio no se hace.** Si sobrara tiempo, se añadiría
 **Redis** como capa de caché delante de los otros dos tiers. No está diseñada ni
-planificada: todo lo que describen este README y `ARQUITECTURA.md` es la fase 1.
+planificada: todo lo que describen este README y `docs/ARQUITECTURA.md` es la
+fase 1.
 
 ---
 
@@ -86,7 +91,10 @@ Luego `wsl --shutdown` desde PowerShell para que tome efecto.
 
 ```
 pids-parte2/
-├── ARQUITECTURA.md          ← el documento de diseño. Leerlo primero.
+├── docs/                    ← TODA la documentación vive aquí
+│   ├── ARQUITECTURA.md      ·  el documento de diseño. Leerlo primero.
+│   ├── REPARTO.md           ·  qué bloque es de quién
+│   └── TAREAS.md            ·  las tareas pendientes, troceadas y sin solapes
 ├── docker-compose.yml       ← con perfiles core/stream/orch/viz
 ├── .env.example             ← copiar a .env
 ├── common/                  ← CONTRATO DE DATOS (compartido por todos)
@@ -113,6 +121,10 @@ pids-parte2/
 ├── airflow/     (P4)  ← DAGs: transformaciones y traspasos entre tiers
 └── grafana/     (P4)  ← dashboards
 ```
+
+> **Las tareas que faltan, con su dueño y sus ficheros**, están en
+> [`docs/TAREAS.md`](docs/TAREAS.md). Están troceadas para que nadie tenga que
+> editar un fichero que otro esté tocando.
 
 > **Si cambiáis el esquema**, los ficheros de `postgres/init/` solo se ejecutan
 > cuando el volumen está vacío. Para recargarlos:
@@ -285,6 +297,9 @@ columna.
 | 10 | API y router de consultas | P3 | pendiente |
 | 11 | Dashboards de Grafana | P4 | pendiente |
 | 12 | Mediciones, memoria y vídeo | todos | pendiente |
+
+Cada paso pendiente está troceado en tareas con dueño, ficheros propios y
+criterio de «hecho» en [`docs/TAREAS.md`](docs/TAREAS.md).
 
 > **El jitter del simulador (paso 6) no es un adorno.** Si amplifica repitiendo
 > las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,

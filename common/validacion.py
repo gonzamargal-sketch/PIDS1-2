@@ -28,8 +28,8 @@ from typing import Callable
 import pandas as pd
 
 # ─────────────────────────────────────────────────────────────
-# Umbrales. Están aquí arriba para que Spark pueda importarlos aunque
-# reimplemente los predicados con su propia API.
+# Umbrales. Están aquí arriba para poder importarlos sueltos desde el
+# consumidor de Kafka, el simulador o la API sin arrastrar el módulo entero.
 # ─────────────────────────────────────────────────────────────
 
 # El dataset dice "2020" pero trae viajes de 2002 a 2021. Damos margen a

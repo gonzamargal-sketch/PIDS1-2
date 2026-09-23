@@ -142,7 +142,8 @@ def main() -> int:
     comprobar(cur.fetchone()["n"] == 6, "Las 6 tablas del esquema existen")
 
     cur.execute("SELECT count(*) AS n FROM retention_policy WHERE activa")
-    comprobar(cur.fetchone()["n"] == 3, "3 políticas de retención sembradas")
+    comprobar(cur.fetchone()["n"] == 2,
+              "2 políticas de retención sembradas (hot->cold y purga del frío)")
 
     if args.no_limpiar:
         print("  [AVISO] --no-limpiar: los conteos fallarán si la BD no está vacía")
@@ -309,12 +310,11 @@ def main() -> int:
     seccion("6. INSTRUMENTACIÓN DE LATENCIAS")
     psycopg2.extras.execute_values(
         cur,
-        """INSERT INTO query_log (endpoint,data_source,filas,latencia_ms,cache_hit)
+        """INSERT INTO query_log (endpoint,data_source,filas,latencia_ms)
            VALUES %s""",
-        [("/trips", "cache", 10, 3.2, True),
-         ("/trips", "hot", 500, 42.0, False),
-         ("/trips", "cold", 5000, 2400.0, False),
-         ("/trips", "mixto", 5500, 2600.0, False)],
+        [("/trips", "hot", 500, 42.0),
+         ("/trips", "cold", 5000, 2400.0),
+         ("/trips", "mixto", 5500, 2600.0)],
     )
     conn.commit()
     cur.execute("SELECT * FROM v_latencia_por_tier ORDER BY p95_ms")

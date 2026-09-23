@@ -3,7 +3,7 @@ PIDS Parte 2 — Contrato de datos: esquema y lectura.
 
 Un solo sitio define cómo se lee el dataset NYC Yellow Taxi y cómo se
 traduce al esquema de PostgreSQL. Lo importan el cargador inicial, el
-simulador y el consumidor de Spark, para que no se desincronicen.
+simulador y el consumidor de Kafka, para que no se desincronicen.
 
 DOS TRAMPAS QUE ESTE MÓDULO RESUELVE
 ────────────────────────────────────

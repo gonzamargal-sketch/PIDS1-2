@@ -112,11 +112,11 @@ COMMENT ON TABLE trips_cuarentena IS
 CREATE TABLE retention_policy (
     id              SERIAL PRIMARY KEY,
     dataset         TEXT    NOT NULL,
-    tier_origen     TEXT    NOT NULL CHECK (tier_origen IN ('hot','cold','redis')),
-    tier_destino    TEXT             CHECK (tier_destino IN ('cold', NULL)),
+    tier_origen     TEXT    NOT NULL CHECK (tier_origen IN ('hot','cold')),
+    tier_destino    TEXT             CHECK (tier_destino IS NULL OR tier_destino = 'cold'),
     umbral_valor    INT     NOT NULL CHECK (umbral_valor > 0),
     umbral_unidad   TEXT    NOT NULL CHECK (umbral_unidad IN ('minutes','hours','days','years')),
-    accion          TEXT    NOT NULL CHECK (accion IN ('ARCHIVE','DELETE','EXPIRE')),
+    accion          TEXT    NOT NULL CHECK (accion IN ('ARCHIVE','DELETE')),
     activa          BOOLEAN NOT NULL DEFAULT TRUE,
     descripcion     TEXT,
     actualizado_en  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -215,12 +215,11 @@ CREATE TABLE query_log (
     id              BIGSERIAL PRIMARY KEY,
     ocurrido_en     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     endpoint        TEXT        NOT NULL,
-    data_source     TEXT        NOT NULL CHECK (data_source IN ('cache','hot','cold','mixto')),
+    data_source     TEXT        NOT NULL CHECK (data_source IN ('hot','cold','mixto')),
     rango_desde     TIMESTAMPTZ,
     rango_hasta     TIMESTAMPTZ,
     filas           INT,
     latencia_ms     NUMERIC(10,2) NOT NULL,
-    cache_hit       BOOLEAN     NOT NULL DEFAULT FALSE,
     parametros      JSONB
 );
 

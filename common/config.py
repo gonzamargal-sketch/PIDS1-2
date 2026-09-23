@@ -64,14 +64,6 @@ class Minio:
 
 
 @dataclass(frozen=True)
-class Redis:
-    host: str = os.getenv("REDIS_HOST", "localhost")
-    port: int = _i("REDIS_PORT", 6379)
-    ttl_metricas: int = _i("REDIS_TTL_METRICAS", 300)
-    stream_maxlen: int = _i("REDIS_STREAM_MAXLEN", 10_000)
-
-
-@dataclass(frozen=True)
 class Iceberg:
     catalogo: str = os.getenv("ICEBERG_CATALOG", "pids_catalog")
     namespace: str = os.getenv("ICEBERG_NAMESPACE", "lakehouse")
@@ -107,7 +99,6 @@ class Simulador:
 
 PG = Postgres()
 MINIO = Minio()
-REDIS = Redis()
 ICEBERG = Iceberg()
 KAFKA = Kafka()
 SIMULADOR = Simulador()
