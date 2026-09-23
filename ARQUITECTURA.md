@@ -10,21 +10,39 @@ construyendo, quién hace qué, y por qué cada decisión es la que es.
 
 ---
 
+## 0. Alcance: fase 1
+
+Este documento describe la **fase 1**, que es lo que se entrega. Los datos viven solo en dos
+sitios:
+
+- **PostgreSQL** — tier caliente.
+- **MinIO + Iceberg** — bronze y tier frío. Las consultas al histórico se hacen sobre Iceberg.
+
+Y se mueven con dos piezas:
+
+- **Kafka** — única puerta de entrada de los datos en vivo.
+- **Airflow** — todas las transformaciones y traspasos entre tiers.
+
+**No hay Redis ni Spark.** Cualquier referencia a ellos que quede en el código es un resto de la
+versión anterior del diseño.
+
+---
+
 ## 1. Decisiones ya cerradas
 
 | Tema | Decisión | Por qué |
 |---|---|---|
+| Almacenamiento | **Solo PostgreSQL y MinIO/Iceberg** | Dos tiers bien hechos cubren E8; un tercero no añade nada a la historia |
 | Modelo de tiers | **Mudanza** (disjunto): Postgres 0-30 días, Iceberg 31+ | Se ve la migración de verdad en la demo |
 | Frontera hot/cold | 30 días, **parametrizable** | En demo la bajamos a minutos y se dispara en directo |
 | Tier caliente | PostgreSQL particionado **por día** | Desalojar = `DROP PARTITION`, instantáneo |
 | Tier frío | **Iceberg** sobre MinIO, particionado por mes, **ZSTD** | ZSTD ~30-40% menor que Snappy; ideal para datos que se leen poco |
 | Catálogo Iceberg | **SQL catalog** sobre el propio Postgres | Un contenedor menos, sin Hive Metastore |
 | Cómo hablamos con Iceberg | **PyIceberg** (no Spark+Iceberg) | Sin JVM ni JARs. Ver §3.4 |
-| Spark | **Structured Streaming** para Kafka → caliente | Donde aporta de verdad, sin tocar Iceberg |
-| Redis | Agregados con TTL **+ Stream** de últimos minutos | El Stream da el panel "en vivo" de Grafana |
-| Ingesta | Simulador → **Kafka** directo, sin API de captura | Decidido en D2 |
+| Ingesta | Simulador → **Kafka** → consumidor en Python → Postgres | Kafka es la única entrada en vivo. Decidido en D2 |
+| Transformaciones y traspasos | **Airflow**: todos los movimientos entre tiers son DAGs | Un solo sitio donde mirar qué se mueve, cuándo y por qué |
 | Orquestación | **Airflow** standalone, 1 contenedor | Los DAGs lucen; el despliegue completo no cabe |
-| Sin Timescale, sin Trino, sin sub-tiers, sin alertas, sin K8s | | Fuera de alcance en 3 semanas |
+| Sin Redis, sin Spark, sin Timescale, sin Trino, sin sub-tiers, sin alertas, sin K8s | | Fuera de alcance en 3 semanas |
 | Late-arriving data | Se documenta, no se implementa | Decidido en C6 |
 
 ---
@@ -38,7 +56,7 @@ construyendo, quién hace qué, y por qué cada decisión es la que es.
      ┌──────────────────┐
      │  BRONZE · MinIO  │  copia cruda intacta, nunca se modifica
      └────────┬─────────┘
-              │ carga inicial (una vez, Spark batch)
+              │ carga inicial (una vez, PyIceberg)
               │ todo 2020 ya es "antiguo" → va directo al frío
               ▼
                           ┌──────────────────────────┐
@@ -49,16 +67,13 @@ construyendo, quién hace qué, y por qué cada decisión es la que es.
                           ┌──────────┴───────────────┐
   ┌────────────┐  Kafka   │  HOT · PostgreSQL        │  últimos 30 días, part. diaria
   │ SIMULADOR  │ ───────▶ │  particionado por día    │
-  │ replay2020 │  Spark   └──────────┬───────────────┘
-  │ con reloj  │  Stream             │
-  │ desplazado │ ───────▶ ┌──────────▼───────────────┐
-  └────────────┘          │  REDIS · agregados + TTL │  métricas vivas
-                          │  + Stream últimos N min  │
-                          └──────────┬───────────────┘
-                                     │
+  │ replay2020 │ consumi- └──────────┬───────────────┘
+  │ con reloj  │ dor Python          │
+  │ desplazado │                     │
+  └────────────┘                     │
                     ┌────────────────▼─────────────────┐
-                    │  FastAPI · router de consultas   │  decide tier, fusiona,
-                    │  anota data_source y latencia    │  anota de dónde viene
+                    │  FastAPI · router de consultas   │  decide tier (Postgres o
+                    │  anota data_source y latencia    │  Iceberg), fusiona, anota
                     └────────────────┬─────────────────┘
                                      │
                               ┌──────▼──────┐
@@ -137,43 +152,42 @@ Nada de umbrales escritos en un `.py`. Una tabla que Airflow lee en cada ejecuci
 CREATE TABLE retention_policy (
     id              SERIAL PRIMARY KEY,
     dataset         TEXT NOT NULL,      -- 'trips'
-    tier_origen     TEXT NOT NULL,      -- 'hot' | 'cold' | 'redis'
+    tier_origen     TEXT NOT NULL,      -- 'hot' | 'cold'
     tier_destino    TEXT,               -- 'cold' | NULL si es borrado
     umbral_valor    INT NOT NULL,
     umbral_unidad   TEXT NOT NULL,      -- 'minutes' | 'days' | 'years'
-    accion          TEXT NOT NULL,      -- 'ARCHIVE' | 'DELETE' | 'EXPIRE'
+    accion          TEXT NOT NULL,      -- 'ARCHIVE' | 'DELETE'
     activa          BOOLEAN DEFAULT TRUE
 );
 
 INSERT INTO retention_policy VALUES
-  (DEFAULT, 'trips', 'hot',   'cold', 30, 'days',    'ARCHIVE', TRUE),
-  (DEFAULT, 'trips', 'cold',  NULL,    7, 'years',   'DELETE',  TRUE),
-  (DEFAULT, 'metrics','redis', NULL,  24, 'hours',   'EXPIRE',  TRUE);
+  (DEFAULT, 'trips', 'hot',  'cold', 30, 'days',  'ARCHIVE', TRUE),
+  (DEFAULT, 'trips', 'cold', NULL,    7, 'years', 'DELETE',  TRUE);
 ```
 
 Para la demo: `UPDATE retention_policy SET umbral_valor=5, umbral_unidad='minutes' WHERE ...`
 y en cinco minutos empieza a archivarse en directo. Cambiar la política es un UPDATE, no un
 redeploy — que es exactamente como funcionan las lifecycle rules de S3.
 
-**Bonus para la memoria:** cada capa expresa su retención con su mecanismo nativo. Redis con
-`TTL`, PostgreSQL con `DROP PARTITION`, Iceberg con `expire_snapshots`. No hemos inventado un
-sistema de retención por encima: usamos el que cada motor ya trae y Airflow solo los coordina.
+**Bonus para la memoria:** cada capa expresa su retención con su mecanismo nativo. PostgreSQL con
+`DROP PARTITION` e Iceberg con `expire_snapshots`. No hemos inventado un sistema de retención por
+encima: usamos el que cada motor ya trae y Airflow solo los coordina.
 
 ### 3.4 Por qué PyIceberg y no Spark+Iceberg
 
-Spark está en el stack y lo usamos — para el streaming, que es donde aporta. Pero hacer que
-Spark escriba en Iceberg exige encajar versiones de Spark, Scala, `iceberg-spark-runtime`,
-`hadoop-aws` y el SDK de AWS. Es el punto donde más proyectos se atascan y no tenemos tres
-semanas para pelearnos con JARs.
+Hacer que Spark escriba en Iceberg exige encajar versiones de Spark, Scala,
+`iceberg-spark-runtime`, `hadoop-aws` y el SDK de AWS. Es el punto donde más proyectos se atascan
+y no tenemos tres semanas para pelearnos con JARs.
 
 PyIceberg es Iceberg en Python puro: mismo formato, mismos snapshots, mismos metadatos, sin
 JVM. Habla con el catálogo SQL sobre nuestro Postgres y con MinIO por S3. A 24M de filas va
 sobrado.
 
-Queda así, y cada pieza hace lo que mejor sabe:
+Sin Spark en el stack, todo el proyecto queda en Python y cada pieza hace lo que mejor sabe:
 
-- **Spark Structured Streaming** → Kafka a PostgreSQL y Redis. Sin dependencia de Iceberg.
-- **PyIceberg** → todo lo que toca el tier frío.
+- **Consumidor de Kafka en Python** → valida con `common.validacion` y escribe en PostgreSQL y en
+  cuarentena.
+- **Airflow + PyIceberg** → todo lo que mueve datos entre tiers y todo lo que toca el tier frío.
 
 > **Nota sobre compactación:** PyIceberg tiene soporte limitado de `rewrite_data_files`. Lo
 > evitamos por diseño: el DAG archiva una partición completa por ejecución, así que escribe
@@ -186,23 +200,23 @@ Queda así, y cada pieza hace lo que mejor sabe:
 | Servicio | Qué hace | RAM aprox. | Perfil |
 |---|---|---|---|
 | `postgres` | Tier caliente, catálogo Iceberg, políticas, marts | 512 MB | core |
-| `redis` | Agregados con TTL + Stream de eventos recientes | 256 MB | core |
 | `minio` + `minio-init` | Bronze y tier frío (S3) | 512 MB | core |
 | `api` | FastAPI: router de consultas y endpoints | 256 MB | core |
 | `kafka` | Broker en modo **KRaft**, sin Zookeeper | 1 GB | stream |
-| `spark-stream` | Structured Streaming en **local mode**, 1 contenedor | 1.5 GB | stream |
+| `consumidor` | Consumidor de Kafka en Python → PostgreSQL + cuarentena | 128 MB | stream |
 | `simulator` | Replay de 2020 con reloj desplazado | 128 MB | stream |
-| `airflow` | `airflow standalone`, DAGs del ciclo de vida | 800 MB | orch |
+| `airflow` | `airflow standalone`, DAGs de transformación y ciclo de vida | 800 MB | orch |
 | `grafana` | Dashboards | 256 MB | viz |
 
-**Total con todo levantado: ~5.2 GB.**
+**Total con todo levantado: ~3.6 GB.** Quitar Redis y Spark nos ahorra unos 1,7 GB, que en las
+máquinas de 8 GB es la diferencia entre poder levantarlo todo o no.
 
 ### Perfiles de Compose (importante: el mínimo del grupo son 8 GB)
 
 Nadie necesita levantarlo todo para trabajar en lo suyo:
 
 ```bash
-docker compose --profile core up -d                    # ~1.5 GB, siempre
+docker compose --profile core up -d                    # ~1.3 GB, siempre
 docker compose --profile core --profile stream up -d   # trabajar en ingesta
 docker compose --profile core --profile orch up -d     # trabajar en DAGs
 docker compose --profile "*" up -d                     # integración y grabación
@@ -275,7 +289,7 @@ Parte 3 necesitará para decirle al usuario si está viendo algo fresco o histó
 {
   "data": [ ... ],
   "meta": {
-    "data_source": "mixto",              // cache | hot | cold | mixto
+    "data_source": "mixto",              // hot | cold | mixto
     "coverage": [
       {"desde": "2026-09-01", "hasta": "2026-09-21", "tier": "hot"},
       {"desde": "2020-01-01", "hasta": "2026-08-31", "tier": "cold"}
@@ -289,8 +303,8 @@ Parte 3 necesitará para decirle al usuario si está viendo algo fresco o histó
 
 **El router** es el componente con más chicha del proyecto. Recibe un rango de fechas, lo corta
 por la frontera de retención, lanza las consultas que hagan falta a cada tier, fusiona y anota.
-Orden de preferencia: Redis si la métrica está cacheada → Postgres si el rango cae en caliente →
-Iceberg si cae en frío → ambos y fusión si cruza.
+Orden de decisión: Postgres si el rango cae en caliente → Iceberg si cae en frío → ambos y fusión
+si cruza la frontera.
 
 Endpoints mínimos: `/trips`, `/metrics/{nombre}`, `/stats`, `/lifecycle/status`,
 `/lifecycle/policy` (GET y PUT, para bajar el umbral en la demo), `/health`.
@@ -299,7 +313,7 @@ Endpoints mínimos: `/trips`, `/metrics/{nombre}`, `/stats`, `/lifecycle/status`
 
 ## 7. Qué medimos
 
-Sin números medidos no hemos demostrado E8. Estas son las siete, y todas acaban en Grafana:
+Sin números medidos no hemos demostrado E8. Estas son las seis, y todas acaban en Grafana:
 
 1. **Filas por tier en el tiempo** — área apilada. Hace visible la migración.
 2. **Bytes por fila: Postgres vs Iceberg** — *nuestra métrica estrella.* Mismo dato, el caliente
@@ -308,10 +322,9 @@ Sin números medidos no hemos demostrado E8. Estas son las siete, y todas acaban
 4. **Ratio de compresión** del tier frío frente al tamaño equivalente en Postgres.
 5. **Edad del registro más antiguo en caliente** — debe mantenerse bajo el umbral. Es una métrica
    de *cumplimiento de la política*, y queda muy bien.
-6. **Tasa de aciertos de Redis.**
-7. **Porcentaje de registros en cuarentena** — calidad de los datos.
+6. **Porcentaje de registros en cuarentena** — calidad de los datos.
 
-**SLAs que nos ponemos:** Redis < 10 ms, PostgreSQL < 500 ms, Iceberg < 10 s (p95).
+**SLAs que nos ponemos:** PostgreSQL < 500 ms, Iceberg < 10 s (p95).
 
 ---
 
@@ -324,17 +337,17 @@ se acuerdan el día 2 y no se tocan.
 Esquema de Postgres particionado, `retention_policy`, `archival_jobs` y su máquina de estados,
 tabla Iceberg con PyIceberg, el job de archivado y el de purga.
 
-**P2 — Ingesta y streaming**
+**P2 — Ingesta**
 Kafka en KRaft, el simulador (replay con reloj desplazado, ritmo configurable, inyección de
-sucios), Spark Structured Streaming, escritura a Postgres + Redis, cuarentena.
+sucios), el consumidor de Kafka en Python, escritura a Postgres y cuarentena.
 
 **P3 — Acceso**
-FastAPI, el router de consultas, el contrato con `data_source`, caché sobre Redis,
+FastAPI, el router de consultas sobre Postgres e Iceberg, el contrato con `data_source`,
 instrumentación de latencias en `query_log`.
 
 **P4 — Orquestación, observabilidad e integración**
-Airflow y sus DAGs, Grafana y los dashboards, `docker-compose.yml` con perfiles, las mediciones
-de §7, y coordinar el vídeo.
+Airflow y sus DAGs (todas las transformaciones y traspasos), Grafana y los dashboards,
+`docker-compose.yml` con perfiles, las mediciones de §7, y coordinar el vídeo.
 
 La memoria se reparte al final: cada uno escribe su bloque.
 
@@ -356,7 +369,7 @@ La memoria se reparte al final: cada uno escribe su bloque.
 
 | Día | Qué |
 |---|---|
-| 6-8 | Simulador + Spark Streaming → Postgres y Redis. Cuarentena funcionando |
+| 6-8 | Simulador + consumidor de Kafka → Postgres. Cuarentena funcionando |
 | 9-10 | Job de archivado con la máquina de estados. Política como datos |
 | 11-12 | Airflow con los cuatro DAGs. Router de consultas completo |
 
@@ -366,7 +379,7 @@ La memoria se reparte al final: cada uno escribe su bloque.
 
 | Día | Qué |
 |---|---|
-| 13-15 | Grafana, las siete métricas, instrumentación de latencias |
+| 13-15 | Grafana, las seis métricas, instrumentación de latencias |
 | 16-18 | Memoria, guion del vídeo, grabación |
 | 19-21 | **Colchón.** No se programa nada nuevo |
 
@@ -384,7 +397,7 @@ Guion propuesto, ~7:30:
 |---|---|
 | 0:00-0:30 | El diagrama de §2. Qué problema resuelve E8 |
 | 0:30-1:30 | `docker compose up`, servicios arrancando, MinIO con el bronze cargado |
-| 1:30-2:30 | El simulador emitiendo → Kafka → Spark → filas apareciendo en Postgres y Redis, con Grafana actualizándose en vivo |
+| 1:30-2:30 | El simulador emitiendo → Kafka → consumidor → filas apareciendo en Postgres, con Grafana actualizándose en vivo |
 | 2:30-4:30 | **El momento clave.** `PUT /lifecycle/policy` baja el umbral a 5 min. Se dispara el DAG en Airflow. Se ve la partición pasar por los estados, el conteo del caliente bajar y el del frío subir, todo en Grafana |
 | 4:30-6:00 | El router: una consulta solo-caliente (rápida), una solo-fría (lenta), una que cruza la frontera. Se enseña el `data_source` y el `coverage` de cada respuesta |
 | 6:00-7:00 | Los números: bytes por fila en cada tier, ratio de compresión, percentiles de latencia frente a los SLAs |
@@ -394,9 +407,15 @@ Guion propuesto, ~7:30:
 
 ## 11. Riesgos reales
 
-**Kafka + Spark en 8 GB.** Es lo más pesado del stack. Mitigación: perfiles de Compose, Spark en
-local mode, `.wslconfig` bien puesto. Si aun así no cabe en la máquina de alguien, esa persona
-trabaja con `core` y prueba la parte de streaming en la máquina grande.
+**Kafka en 8 GB.** Es lo más pesado del stack. Sin Spark ni Redis el total baja a ~3,6 GB, pero
+Kafka sigue pidiendo 1 GB. Mitigación: perfiles de Compose y `.wslconfig` bien puesto. Si aun así
+no cabe en la máquina de alguien, esa persona trabaja con `core` y prueba la ingesta en la
+máquina grande.
+
+**El consumidor en Python tiene que aguantar el ritmo.** Sin Spark, el paso de Kafka a Postgres
+depende de un proceso Python. Mitigación: insertar por lotes (`execute_values`, `page_size` de
+cientos de filas) y confirmar el offset solo después del commit en Postgres, para no perder
+mensajes si el proceso se cae.
 
 **PyIceberg tiene menos funciones que Spark+Iceberg.** Sobre todo en mantenimiento. Mitigación:
 escribimos particiones completas para no generar ficheros pequeños (§3.4). Si algo falta de
@@ -446,7 +465,7 @@ mensuales que van de gigas a megas, y qué implica eso para el particionado y el
 - [ ] Kafka en KRaft, topic `trips.raw`
 - [ ] Simulador con reloj desplazado y ritmo configurable
 - [ ] Inyección de registros sucios con porcentaje configurable
-- [ ] Spark Streaming → Postgres + Redis + cuarentena
+- [ ] Consumidor de Kafka → Postgres + cuarentena
 - [ ] DAG de archivado con máquina de estados
 - [ ] DAG de creación de particiones futuras
 - [ ] DAG de `cold_stats`
@@ -454,10 +473,9 @@ mensuales que van de gigas a megas, y qué implica eso para el particionado y el
 - [ ] Router de consultas con `data_source` y `coverage`
 
 **Semana 3**
-- [ ] Datasources de Grafana (Postgres + Redis)
+- [ ] Datasource de Grafana (Postgres)
 - [ ] Dashboard de ciclo de vida
 - [ ] Dashboard de latencias frente a SLAs
-- [ ] Las siete métricas de §7 medidas y capturadas
+- [ ] Las seis métricas de §7 medidas y capturadas
 - [ ] Memoria escrita
 - [ ] Vídeo grabado
-```

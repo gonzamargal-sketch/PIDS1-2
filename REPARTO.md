@@ -8,6 +8,9 @@ Antes de tocar nada, leed las secciones **3.1, 3.2 y 3.3** de
 [`ARQUITECTURA.md`](ARQUITECTURA.md). Son las tres ideas que condicionan lo
 que escribe cada uno.
 
+**Alcance:** los datos viven solo en PostgreSQL y en MinIO/Iceberg. Entran por
+Kafka y se mueven entre tiers con Airflow. No hay Redis ni Spark.
+
 ---
 
 ## Reglas comunes
@@ -67,7 +70,7 @@ cuadrando.
 
 ---
 
-## P2 — Ingesta y streaming
+## P2 — Ingesta
 
 **De este bloque dependen todas las métricas del proyecto.** Es el más
 crítico de los cuatro.
@@ -92,13 +95,18 @@ el dataset (importes negativos, distancia cero, pasajeros a cero).
 
 **Empezad por una versión que escriba directa a PostgreSQL, sin Kafka.** En
 cuanto genere un millón de filas realistas, desbloquea las métricas de
-compresión y latencia de todo el grupo. Kafka y Spark son fontanería y vienen
-después.
+compresión y latencia de todo el grupo. Kafka es fontanería y viene después.
 
-**Paso 7: Spark Structured Streaming.** `ingesta/consumidor_spark.py`
-Consume de Kafka, valida con `common.validacion`, y escribe en el tier
-caliente, en Redis (agregados con TTL y el stream de eventos recientes) y en
-cuarentena lo que no pasa.
+**Paso 7: el consumidor de Kafka.** `ingesta/consumidor_kafka.py`
+Un proceso en Python que consume de `trips.raw`, valida con
+`common.validacion`, y escribe en el tier caliente lo que pasa y en
+cuarentena lo que no. Dos cosas que no se pueden saltar:
+
+- **Insertar por lotes** con `execute_values`, igual que la prueba de humo.
+  Fila a fila no aguanta el ritmo del simulador.
+- **Confirmar el offset de Kafka después del commit en PostgreSQL**, nunca
+  antes. Si el proceso se cae entre medias, se reprocesa el lote en vez de
+  perderlo.
 
 **Hecho cuando**: el sistema se llena solo a un ritmo configurable y los
 registros generados son realmente distintos entre sí.
@@ -113,8 +121,8 @@ El router es lo más interesante del proyecto técnicamente. Recibe un rango de
 fechas, lo corta por la frontera de retención, decide qué tiers tocar,
 consulta, fusiona y **anota de dónde viene cada dato**.
 
-Orden de preferencia: Redis si la métrica está cacheada → PostgreSQL si el
-rango cae en caliente → Iceberg si cae en frío → los dos y fusión si cruza.
+Orden de decisión: PostgreSQL si el rango cae en caliente → Iceberg si cae en
+frío → los dos y fusión si cruza la frontera.
 
 Toda respuesta lleva:
 
@@ -122,7 +130,7 @@ Toda respuesta lleva:
 {
   "data": [ ... ],
   "meta": {
-    "data_source": "mixto",
+    "data_source": "mixto",          // hot | cold | mixto
     "coverage": [
       {"desde": "...", "hasta": "...", "tier": "hot"},
       {"desde": "...", "hasta": "...", "tier": "cold"}
@@ -155,7 +163,9 @@ de ambos tiers con el `coverage` correcto.
 
 **Paso 9: Airflow.** `airflow/dags/`
 
-Airflow en modo `standalone`, un solo contenedor. Cuatro DAGs:
+Airflow en modo `standalone`, un solo contenedor. **Todas las transformaciones
+y traspasos entre tiers pasan por aquí**: si un dato cambia de sitio, lo mueve
+un DAG. Cuatro DAGs:
 
 - `mantener_particiones` — diario, llama a `crear_particiones_adelanto(7)`
 - `archivar` — envuelve el job de P1
@@ -166,15 +176,14 @@ Airflow en modo `standalone`, un solo contenedor. Cuatro DAGs:
 **No esperes a P1**: los dos primeros y el cuarto llaman a funciones SQL que
 ya existen y están probadas.
 
-**Paso 11: Grafana.** Datasources de PostgreSQL y Redis. Las siete métricas:
+**Paso 11: Grafana.** Un solo datasource, PostgreSQL. Las seis métricas:
 
 1. Filas por tier en el tiempo (área apilada) — hace visible la migración
 2. **Bytes por fila: PostgreSQL vs Iceberg** — la métrica estrella de E8
 3. Latencia p50/p95/p99 por tier frente a los SLAs
 4. Ratio de compresión
 5. Edad del registro más antiguo en caliente — cumplimiento de la política
-6. Aciertos de caché en Redis
-7. Porcentaje de registros en cuarentena
+6. Porcentaje de registros en cuarentena
 
 Casi todas salen de vistas que ya existen: `v_coste_por_tier`,
 `v_latencia_por_tier`, `v_cumplimiento_politica`, `v_calidad`.

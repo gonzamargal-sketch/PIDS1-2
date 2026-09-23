@@ -9,6 +9,19 @@ lo que escribe cada uno.
 
 ---
 
+## Fases del proyecto
+
+**Fase 1 — la que se entrega.** Los datos se reparten solo entre **PostgreSQL**
+(tier caliente) y **MinIO** (bronze y tier frío, consultado con **Iceberg**).
+La ingesta entra por **Kafka** y todas las transformaciones y traspasos entre
+tiers los hace **Airflow**. No hay Redis ni Spark.
+
+**Fase 2 — opcional, en principio no se hace.** Si sobrara tiempo, se añadiría
+**Redis** como capa de caché delante de los otros dos tiers. No está diseñada ni
+planificada: todo lo que describen este README y `ARQUITECTURA.md` es la fase 1.
+
+---
+
 ## Arranque en 3 minutos
 
 ```bash
@@ -41,7 +54,6 @@ Servicios levantados:
 |---|---|---|
 | PostgreSQL | `localhost:5432` | `pids` / `pids_dev_2026` |
 | MinIO consola | http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` |
-| Redis | `localhost:6379` | — |
 
 ---
 
@@ -50,8 +62,8 @@ Servicios levantados:
 Nadie necesita levantarlo todo para trabajar en lo suyo:
 
 ```bash
-docker compose --profile core up -d                     # ~1,5 GB, siempre
-docker compose --profile core --profile stream up -d    # + Kafka y Spark
+docker compose --profile core up -d                     # ~1,3 GB, siempre
+docker compose --profile core --profile stream up -d    # + Kafka, consumidor y simulador
 docker compose --profile core --profile orch up -d      # + Airflow
 docker compose --profile "*" up -d                      # todo (integración y vídeo)
 ```
@@ -93,11 +105,12 @@ pids-parte2/
 │   └── descargar_bronze.py  ·  descarga los 24,6M del portal (opcional)
 ├── ingesta/
 │   ├── subir_bronze.py      ·  paso 4: dataset crudo → MinIO
-│   └── carga_inicial.py     ·  paso 5: bronze → Iceberg
+│   ├── carga_inicial.py     ·  paso 5: bronze → Iceberg
+│   └── consumidor_kafka.py  ·  paso 7 (P2): Kafka → PostgreSQL
 ├── simulador/   (P2)  ← replay con jitter
 ├── api/         (P3)  ← FastAPI y router de consultas
 ├── archivado/   (P1)  ← job hot→cold con PyIceberg
-├── airflow/     (P4)  ← DAGs del ciclo de vida
+├── airflow/     (P4)  ← DAGs: transformaciones y traspasos entre tiers
 └── grafana/     (P4)  ← dashboards
 ```
 
@@ -232,11 +245,10 @@ poda a nivel de día.
 El frío se escribe una vez y se lee poco, que es justo donde ZSTD gana un 30-40%
 de tamaño. Va directo al «barato» de E8.
 
-**PyIceberg, no Spark+Iceberg.** Spark sigue en el proyecto para el streaming,
-pero hacer que escriba en Iceberg exige encajar versiones de Spark, Scala,
-`iceberg-spark-runtime`, `hadoop-aws` y el SDK de AWS. Es donde se atascan estos
-proyectos. PyIceberg es Iceberg en Python puro: mismo formato, mismos snapshots,
-sin JVM.
+**PyIceberg, no Spark+Iceberg.** Hacer que Spark escriba en Iceberg exige
+encajar versiones de Spark, Scala, `iceberg-spark-runtime`, `hadoop-aws` y el
+SDK de AWS. Es donde se atascan estos proyectos. PyIceberg es Iceberg en Python
+puro: mismo formato, mismos snapshots, sin JVM.
 
 ### Tres trampas que ya están resueltas en `common/lakehouse.py`
 
@@ -267,7 +279,7 @@ columna.
 | 4 | Subida a bronze (MinIO) | P1 | ✅ |
 | 5 | Tabla Iceberg y carga inicial | P1 | ✅ |
 | 6 | Simulador con jitter | P2 | pendiente |
-| 7 | Spark Streaming: Kafka → caliente + Redis | P2 | pendiente |
+| 7 | Consumidor de Kafka → caliente + cuarentena | P2 | pendiente |
 | 8 | Job de archivado con PyIceberg | P1 | pendiente |
 | 9 | DAGs de Airflow | P4 | pendiente |
 | 10 | API y router de consultas | P3 | pendiente |
