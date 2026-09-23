@@ -32,7 +32,10 @@ pyiceberg-core==0.10.1
 
 # MinIO / S3
 boto3==1.43.98
-s3fs==2025.9.0
+# NO añadáis s3fs: arrastra aiobotocore, que fija botocore a un rango por
+# detrás del que pide boto3 (hoy <1.43.76 frente a >=1.43.98) y el
+# resolutor de pip se queda sin solución. No hace falta: PyIceberg usa el
+# FileIO de PyArrow para hablar con MinIO, no fsspec.
 
 # Varios
 requests==2.33.1

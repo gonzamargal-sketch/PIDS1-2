@@ -62,10 +62,41 @@ def seccion(titulo: str) -> None:
     print(f"\n{'─'*66}\n{titulo}\n{'─'*66}")
 
 
+def limpiar(cur, conn) -> None:
+    """Deja las tablas que toca esta prueba como recién creadas.
+
+    La prueba afirma conteos absolutos (`count(*) == filas insertadas`) y
+    recorre la máquina de estados del archivado de principio a fin. Las dos
+    cosas solo se sostienen partiendo de cero: sin esto, la segunda
+    ejecución falla por filas acumuladas, y la partición elegida puede venir
+    ya en VERIFICADO de la vez anterior, con lo que la comprobación
+    importante —que no se puede desalojar sin verificar— se saltaría.
+
+    Solo borra lo que la propia prueba escribe. cold_stats y
+    retention_policy no se tocan.
+    """
+    cur.execute("""SELECT c.relname FROM pg_class c
+                   JOIN pg_inherits i ON i.inhrelid = c.oid
+                   JOIN pg_class pa   ON pa.oid = i.inhparent
+                   WHERE pa.relname = 'taxi_trips'
+                     AND c.relname ~ '^taxi_trips_\\d{4}_\\d{2}_\\d{2}$'""")
+    particiones = [r["relname"] for r in cur.fetchall()]
+    for nombre in particiones:
+        cur.execute(f'DROP TABLE IF EXISTS "{nombre}"')
+
+    cur.execute("TRUNCATE taxi_trips, trips_cuarentena, archival_jobs, query_log")
+    conn.commit()
+    print(f"{OK} Estado de partida limpio "
+          f"({len(particiones)} particiones previas eliminadas)")
+
+
 # ══════════════════════════════════════════════════════════════
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--dsn", default=PG.dsn)
+    p.add_argument("--no-limpiar", action="store_true",
+                   help="No borrar el rastro de ejecuciones anteriores. "
+                        "Las comprobaciones de conteo fallarán si ya hay datos.")
     args = p.parse_args()
 
     # ── 1. Contrato de datos ──────────────────────────────────
@@ -112,6 +143,11 @@ def main() -> int:
 
     cur.execute("SELECT count(*) AS n FROM retention_policy WHERE activa")
     comprobar(cur.fetchone()["n"] == 3, "3 políticas de retención sembradas")
+
+    if args.no_limpiar:
+        print("  [AVISO] --no-limpiar: los conteos fallarán si la BD no está vacía")
+    else:
+        limpiar(cur, conn)
 
     # ── 3. Inserción ──────────────────────────────────────────
     seccion("3. INSERCIÓN CON event_time REPARTIDO")
