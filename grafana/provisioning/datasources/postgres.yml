@@ -1,0 +1,26 @@
+# Único datasource del proyecto: el PostgreSQL de siempre (P4, T4.4).
+#
+# Grafana no lee Iceberg: las cifras del frío llegan a cold_stats por el
+# DAG estadisticas_frio. Las credenciales salen del .env que Compose le
+# pasa al contenedor (env_file), igual que al resto de servicios.
+#
+# El uid es fijo porque los dashboards lo referencian por uid.
+apiVersion: 1
+
+datasources:
+  - name: PIDS PostgreSQL
+    uid: pids-postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: ${POSTGRES_HOST}:${POSTGRES_PORT}
+    user: ${POSTGRES_USER}
+    isDefault: true
+    editable: false
+    jsonData:
+      database: ${POSTGRES_DB}
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+      timeInterval: 1m
+    secureJsonData:
+      password: ${POSTGRES_PASSWORD}

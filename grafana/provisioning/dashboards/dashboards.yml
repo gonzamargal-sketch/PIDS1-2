@@ -1,0 +1,15 @@
+# Carga los dashboards JSON de esta misma carpeta (P4, T4.4).
+# Se editan en el repo, no en la interfaz: allowUiUpdates=false hace que
+# un cambio hecho a mano en Grafana no se pueda guardar y se pierda.
+apiVersion: 1
+
+providers:
+  - name: pids
+    folder: PIDS · E8
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

@@ -300,13 +300,23 @@ columna.
 | 6 | Simulador con jitter | P2 | pendiente |
 | 7 | Consumidor de Kafka → caliente + cuarentena | P2 | pendiente |
 | 8 | Job de archivado con PyIceberg | P1 | pendiente |
-| 9 | DAGs de Airflow | P4 | pendiente |
+| 9 | DAGs de Airflow | P4 | ✅ `mantener_particiones`, `estadisticas_frio` · `archivar` y `purga_final` listos, esperan a T1.1/T1.2 |
 | 10 | API y router de consultas | P3 | pendiente |
-| 11 | Dashboards de Grafana | P4 | pendiente |
+| 11 | Dashboards de Grafana | P4 | ✅ |
 | 12 | Mediciones, memoria y vídeo | todos | pendiente |
 
 Cada paso pendiente está troceado en tareas con dueño, ficheros propios y
 criterio de «hecho» en [`docs/TAREAS.md`](docs/TAREAS.md).
+
+> **P4 añade `postgres/init/07_p4.sql`** (tabla `hot_stats` y vista
+> `v_historico_por_tier`, para la gráfica de filas por tier en el tiempo). Es
+> idempotente: si ya tenéis la base creada, **no hace falta `down -v`**, basta con
+> `docker compose exec -T postgres psql -U pids -d pids < postgres/init/07_p4.sql`.
+>
+> Los DAGs `archivar` y `purga_final` ejecutan `python -m archivado.job_archivado`
+> y `python -m archivado.purga` desde `/opt/pids`: **P1, dejad los dos módulos
+> ejecutables así** y que salgan con código ≠ 0 si fallan. Mientras no existan,
+> las tareas salen como *skipped*, no en rojo.
 
 > **El jitter del simulador (paso 6) no es un adorno.** Si amplifica repitiendo
 > las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,
