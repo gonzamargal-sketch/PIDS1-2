@@ -9,6 +9,19 @@ lo que escribe cada uno.
 
 ---
 
+## Fases del proyecto
+
+**Fase 1 — la que se entrega.** Los datos se reparten solo entre **PostgreSQL**
+(tier caliente) y **MinIO** (bronze y tier frío, consultado con **Iceberg**).
+La ingesta entra por **Kafka** y todas las transformaciones y traspasos entre
+tiers los hace **Airflow**. No hay Redis ni Spark.
+
+**Fase 2 — opcional, en principio no se hace.** Si sobrara tiempo, se añadiría
+**Redis** como capa de caché delante de los otros dos tiers. No está diseñada ni
+planificada: todo lo que describen este README y `ARQUITECTURA.md` es la fase 1.
+
+---
+
 ## Arranque en 3 minutos
 
 ```bash
@@ -35,40 +48,12 @@ muestra, las pasa por el contrato de datos, las inserta, y ejercita la máquina
 de estados del archivado incluida la comprobación de que **no se puede
 desalojar una partición sin haberla verificado antes**.
 
-> **La prueba de humo limpia antes de empezar.** Borra lo que ella misma
-> escribe —`taxi_trips` con sus particiones diarias, `trips_cuarentena`,
-> `archival_jobs` y `query_log`— y no toca `retention_policy` ni `cold_stats`.
-> Sin eso solo pasaría la primera vez: afirma conteos absolutos, y la partición
-> que elige podría venir ya en `VERIFICADO` de la vez anterior, con lo que la
-> comprobación que de verdad importa se saltaría en silencio. Si necesitáis
-> conservar lo que haya, `--no-limpiar`.
-
-Y con eso ya se puede poblar el tier frío de punta a punta:
-
-```bash
-python ingesta/subir_bronze.py      # paso 4: CSV crudo → MinIO (bronze)
-python ingesta/carga_inicial.py     # paso 5: bronze → contrato → Iceberg
-```
-
-Con la muestra de 1.000 filas, los tres comandos dejan esto. Si vuestros
-números no cuadran, algo está mal montado:
-
-| Comando | Qué tiene que salir |
-|---|---|
-| `scripts/prueba_humo.py` | `TODO CORRECTO`. 998 válidas, 1 rechazada por `cronologia_invalida`, 50 con avisos |
-| `ingesta/subir_bronze.py` | `1 objetos` en `s3://bronze/nyc-taxi/2020/` (97.749 B) |
-| `ingesta/carga_inicial.py` | `998 filas, 2 ficheros, 2 particiones` en `lakehouse.trips`, ~66 B/fila |
-
-Las dos particiones son `event_month=2019-12` y `event_month=2020-01`: la
-muestra cruza el fin de año, y eso confirma que la partición mensual funciona.
-
 Servicios levantados:
 
 | Servicio | URL | Credenciales |
 |---|---|---|
 | PostgreSQL | `localhost:5432` | `pids` / `pids_dev_2026` |
 | MinIO consola | http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` |
-| Redis | `localhost:6379` | — |
 
 ---
 
@@ -77,8 +62,8 @@ Servicios levantados:
 Nadie necesita levantarlo todo para trabajar en lo suyo:
 
 ```bash
-docker compose --profile core up -d                     # ~1,5 GB, siempre
-docker compose --profile core --profile stream up -d    # + Kafka y Spark
+docker compose --profile core up -d                     # ~1,3 GB, siempre
+docker compose --profile core --profile stream up -d    # + Kafka, consumidor y simulador
 docker compose --profile core --profile orch up -d      # + Airflow
 docker compose --profile "*" up -d                      # todo (integración y vídeo)
 ```
@@ -120,11 +105,12 @@ pids-parte2/
 │   └── descargar_bronze.py  ·  descarga los 24,6M del portal (opcional)
 ├── ingesta/
 │   ├── subir_bronze.py      ·  paso 4: dataset crudo → MinIO
-│   └── carga_inicial.py     ·  paso 5: bronze → Iceberg
+│   ├── carga_inicial.py     ·  paso 5: bronze → Iceberg
+│   └── consumidor_kafka.py  ·  paso 7 (P2): Kafka → PostgreSQL
 ├── simulador/   (P2)  ← replay con jitter
 ├── api/         (P3)  ← FastAPI y router de consultas
 ├── archivado/   (P1)  ← job hot→cold con PyIceberg
-├── airflow/     (P4)  ← DAGs del ciclo de vida
+├── airflow/     (P4)  ← DAGs: transformaciones y traspasos entre tiers
 └── grafana/     (P4)  ← dashboards
 ```
 
@@ -242,18 +228,6 @@ Para probar sin bajarse nada, con las mil filas de muestra:
 python ingesta/carga_inicial.py --local datos/muestra_1000.csv --recrear
 ```
 
-**`carga_inicial.py` no es idempotente: cada pasada hace `append`.** Lanzarlo
-dos veces deja 1.996 filas donde debería haber 998, y nada avisa. Es coherente
-con lo que es —una carga, no una sincronización—, pero si repetís, `--recrear`.
-
-Y `--recrear` **deja huérfanos**: el `drop_table` de PyIceberg quita la entrada
-del catálogo pero no borra los Parquet de MinIO. Tras unas cuantas pruebas
-tendréis ficheros en el bucket que la tabla ya no referencia (8 ficheros para
-una tabla de 2, por ejemplo). No rompe nada, pero **no midáis el tamaño del
-tier frío con `mc ls` ni desde la consola de MinIO**: usad
-`lakehouse.estadisticas()`, que lee los manifiestos y solo cuenta lo vivo. Si
-no, el ratio de compresión de la memoria saldrá inflado por basura muerta.
-
 **La carga inicial va directa al frío y no pasa por PostgreSQL.** Los datos son
 de 2020 y estamos en 2026: por `event_time` son históricos por definición, así
 que no tiene sentido meterlos en el caliente para archivarlos acto seguido. Eso
@@ -271,11 +245,10 @@ poda a nivel de día.
 El frío se escribe una vez y se lee poco, que es justo donde ZSTD gana un 30-40%
 de tamaño. Va directo al «barato» de E8.
 
-**PyIceberg, no Spark+Iceberg.** Spark sigue en el proyecto para el streaming,
-pero hacer que escriba en Iceberg exige encajar versiones de Spark, Scala,
-`iceberg-spark-runtime`, `hadoop-aws` y el SDK de AWS. Es donde se atascan estos
-proyectos. PyIceberg es Iceberg en Python puro: mismo formato, mismos snapshots,
-sin JVM.
+**PyIceberg, no Spark+Iceberg.** Hacer que Spark escriba en Iceberg exige
+encajar versiones de Spark, Scala, `iceberg-spark-runtime`, `hadoop-aws` y el
+SDK de AWS. Es donde se atascan estos proyectos. PyIceberg es Iceberg en Python
+puro: mismo formato, mismos snapshots, sin JVM.
 
 ### Tres trampas que ya están resueltas en `common/lakehouse.py`
 
@@ -306,7 +279,7 @@ columna.
 | 4 | Subida a bronze (MinIO) | P1 | ✅ |
 | 5 | Tabla Iceberg y carga inicial | P1 | ✅ |
 | 6 | Simulador con jitter | P2 | pendiente |
-| 7 | Spark Streaming: Kafka → caliente + Redis | P2 | pendiente |
+| 7 | Consumidor de Kafka → caliente + cuarentena | P2 | pendiente |
 | 8 | Job de archivado con PyIceberg | P1 | pendiente |
 | 9 | DAGs de Airflow | P4 | pendiente |
 | 10 | API y router de consultas | P3 | pendiente |
@@ -378,22 +351,6 @@ fallase, habría que cambiar de almacén S3 (SeaweedFS o Garage son los
 candidatos). Avisad al grupo antes de tocarlo: cambia el paso 5 y la carga a
 Iceberg.
 
-### `ResolutionImpossible` al hacer pip install
-
-Si alguien añade **`s3fs`** a `requirements-dev.txt`, la instalación deja de
-resolver y pip escupe cincuenta líneas de versiones de `aiobotocore`.
-
-`s3fs` arrastra `aiobotocore`, que fija `botocore` a un rango siempre por
-detrás del que pide `boto3`: hoy la última versión de `aiobotocore` admite
-`botocore<1.43.76` y `boto3==1.43.98` exige `botocore>=1.43.98`. **No hay
-ninguna combinación de versiones que funcione**, así que no perdáis la tarde
-ajustando pines.
-
-No hace falta: no se importa en ninguna parte del proyecto, y PyIceberg habla
-con MinIO por el FileIO de **PyArrow**, no por fsspec. Si algún día hace falta
-acceso S3 por fsspec, hay que desfijar `boto3` y aceptar la versión que
-`aiobotocore` permita, decidiéndolo entre todos.
-
 ### `pg_config executable not found` al hacer pip install
 
 Pip está intentando compilar `psycopg2-binary` desde el código fuente porque
@@ -413,23 +370,6 @@ cambiar de intérprete. Si de verdad no existe wheel, entonces sí hace falta un
 Python anterior. **Avisad al grupo antes de tocar los pines**: si sube uno, los
 demás tienen que rehacer su venv, y `pandas` 3.x tiene cambios de ruptura
 frente al 2.x, así que quien los suba pasa la prueba de humo antes de commitear.
-
-### `could not translate host name "postgres"` al correr los scripts
-
-Os pasará en cuanto alguien haga `export $(cat .env | xargs)` o añada un
-`load_dotenv()` a `common/config.py`.
-
-`.env` está escrito **para Docker**: ahí dentro `POSTGRES_HOST=postgres` y
-`MINIO_ENDPOINT=minio:9000` son los nombres de servicio de la red de Compose.
-Desde vuestra máquina esos nombres no resuelven. Los scripts funcionan hoy
-porque `common/config.py` **no lee `.env`**: usa sus propios valores por
-defecto, que apuntan a `localhost`, y los puertos están publicados en el host.
-
-O sea que `python-dotenv` está en las dependencias pero nadie lo llama, y eso
-es deliberado. **Si añadís `load_dotenv()`, rompéis los tres comandos desde el
-host** y tendréis que pasar a ejecutarlos dentro de un contenedor o mantener un
-`.env` distinto para local. Si de verdad hace falta, habladlo antes: afecta a
-los cuatro.
 
 ### `port is already allocated`
 
