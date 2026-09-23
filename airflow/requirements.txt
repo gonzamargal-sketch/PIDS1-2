@@ -1,0 +1,12 @@
+# Dependencias que necesitan los DAGs (P4) y los scripts de archivado/ (P1)
+# que envuelven. Se instalan en un venv aparte (/opt/pids-venv) y NO en el
+# Python de Airflow, para que sus restricciones de versiones no choquen con
+# las nuestras (pandas 3, SQLAlchemy 2). Los DAGs las usan a través de
+# ExternalPythonOperator o BashOperator con /opt/pids-venv/bin/python.
+
+pandas==3.0.6
+pyarrow==25.0.1
+psycopg2-binary==2.9.13
+SQLAlchemy==2.0.54
+pyiceberg==0.12.0
+pyiceberg-core==0.10.1

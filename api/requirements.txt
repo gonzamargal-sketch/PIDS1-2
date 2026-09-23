@@ -1,0 +1,15 @@
+# Dependencias del servicio api (P3). Solo lo que usa el contenedor:
+# el entorno local sigue en requirements-dev.txt.
+
+fastapi==0.141.1
+uvicorn==0.53.0
+
+# Tier caliente
+psycopg2-binary==2.9.13
+
+# Tier frío (common/lakehouse.py)
+pandas==3.0.6
+pyarrow==25.0.1
+pyiceberg==0.12.0
+pyiceberg-core==0.10.1   # obligatorio para leer tablas particionadas
+SQLAlchemy==2.0.54       # catálogo SQL de Iceberg

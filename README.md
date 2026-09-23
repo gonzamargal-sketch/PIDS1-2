@@ -59,6 +59,13 @@ Servicios levantados:
 |---|---|---|
 | PostgreSQL | `localhost:5432` | `pids` / `pids_dev_2026` |
 | MinIO consola | http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` |
+| API | http://localhost:8000/docs | — |
+| Airflow (perfil `orch`) | http://localhost:8080 | sin login en desarrollo |
+| Grafana (perfil `viz`) | http://localhost:3000 | `admin` / `admin` |
+
+Tras cambiar un `requirements.txt` de un servicio:
+`docker compose build <servicio>`. El código se monta como volumen, así que
+tocar un `.py` no pide rebuild.
 
 ---
 

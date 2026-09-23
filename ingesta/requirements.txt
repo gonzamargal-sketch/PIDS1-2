@@ -1,0 +1,9 @@
+# Dependencias del servicio consumidor (P2): consumidor_kafka.py.
+# subir_bronze.py y carga_inicial.py se ejecutan en local con
+# requirements-dev.txt, no en este contenedor.
+
+pandas==3.0.6
+psycopg2-binary==2.9.13
+
+# Commit manual del offset después del commit en PostgreSQL
+confluent-kafka==2.15.1

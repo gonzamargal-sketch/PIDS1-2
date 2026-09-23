@@ -127,22 +127,37 @@ services:
         aws --endpoint-url http://minio:9000 s3 ls
       "
 
-  # ── API: se añade en el paso 10 (P3) ─────────────────────
-  # api:
-  #   <<: *comun
-  #   build: ./api
-  #   container_name: pids_api
-  #   profiles: [core, stream, orch, viz]
-  #   depends_on:
-  #     postgres: {condition: service_healthy}
-  #     minio:    {condition: service_healthy}
-  #   env_file: .env
-  #   ports: ["${API_PORT_HOST:-8000}:8000"]
-  #   volumes: ["./api:/app", "./common:/app/common:ro"]
-  #   mem_limit: 384m
+  # FastAPI: router de consultas sobre los dos tiers (P3, paso 10).
+  #
+  # El código se monta en vez de copiarse a la imagen, con la misma
+  # estructura que el repo (/app/api, /app/common): los imports son los
+  # mismos dentro y fuera del contenedor, y un cambio no pide rebuild.
+  api:
+    <<: *comun
+    build: ./api
+    container_name: pids_api
+    profiles: [core, stream, orch, viz]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio:    {condition: service_healthy}
+    env_file: .env
+    command: ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/api"]
+    ports:
+      - "${API_PORT_HOST:-8000}:8000"
+    volumes:
+      - ./api:/app/api
+      - ./common:/app/common:ro
+    # La imagen slim no trae curl: se comprueba con el propio Python
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    mem_limit: 384m
 
   # ══════════════════════════════════════════════════════════
-  # STREAM  (P2)  — se rellena en la semana 2
+  # STREAM  (P2)
   # ══════════════════════════════════════════════════════════
 
   kafka:
@@ -178,23 +193,128 @@ services:
       start_period: 40s
     mem_limit: 1200m
 
-  # simulador:   ./simulador   (P2, paso 6)
-  # consumidor:  ./ingesta     (P2, paso 7)  consumidor_kafka.py
+  # Replay de 2020 con reloj desplazado (P2, paso 6). Hasta que exista
+  # simulador/simulador.py (T2.1) el contenedor sale con error: es normal.
+  # El sumidero se elige con --sumidero {postgres,kafka}; aquí va a Kafka,
+  # que es la única entrada en vivo. Para escribir directo a PostgreSQL:
+  #   docker compose run --rm simulador python -m simulador.simulador --sumidero postgres
+  simulador:
+    <<: *comun
+    build: ./simulador
+    container_name: pids_simulador
+    profiles: [stream]
+    depends_on:
+      postgres: {condition: service_healthy}
+      kafka:    {condition: service_healthy}
+    env_file: .env
+    volumes:
+      - ./simulador:/app/simulador
+      - ./common:/app/common:ro
+      # SIMULADOR_SEMILLA_CSV=/datos/muestra_1000.csv
+      - ./datos:/datos:ro
+    mem_limit: 192m
+
+  # Kafka → validación → caliente + cuarentena (P2, paso 7). Hasta que
+  # exista ingesta/consumidor_kafka.py (T2.2) sale con error: es normal.
+  consumidor:
+    <<: *comun
+    build: ./ingesta
+    container_name: pids_consumidor
+    profiles: [stream]
+    depends_on:
+      postgres: {condition: service_healthy}
+      kafka:    {condition: service_healthy}
+    env_file: .env
+    volumes:
+      - ./ingesta:/app/ingesta
+      - ./common:/app/common:ro
+    mem_limit: 192m
 
   # ══════════════════════════════════════════════════════════
-  # ORCH  (P4)  — se rellena en la semana 2
+  # ORCH  (P4)
   # ══════════════════════════════════════════════════════════
-  # airflow:     ./airflow     (paso 9)
+
+  # Airflow standalone: scheduler, api-server y dag-processor en un solo
+  # contenedor. Sus metadatos van a SQLite en un volumen propio, no a
+  # nuestro PostgreSQL, para no mezclar sus tablas con las del proyecto.
+  #
+  # El código del proyecto se monta en /opt/pids con la misma estructura
+  # que el repo. Los DAGs lo ejecutan con /opt/pids-venv/bin/python (ver
+  # airflow/Dockerfile), que tiene PYTHONPATH=/opt/pids.
+  airflow:
+    <<: *comun
+    build: ./airflow
+    container_name: pids_airflow
+    profiles: [orch]
+    depends_on:
+      postgres:   {condition: service_healthy}
+      minio:      {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    env_file: .env
+    environment:
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/db/airflow.db
+      # Entorno de desarrollo: sin pantalla de login
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: UTC
+      # Con los valores por defecto roza el GB. Cuatro DAGs no necesitan más.
+      AIRFLOW__API__WORKERS: "1"
+      AIRFLOW__CORE__PARALLELISM: "4"
+      PYTHONPATH: /opt/pids
+    ports:
+      - "${AIRFLOW_PORT_HOST:-8080}:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./common:/opt/pids/common:ro
+      - ./archivado:/opt/pids/archivado:ro
+      - airflow_datos:/opt/airflow/db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/v2/monitor/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    mem_limit: 1g
 
   # ══════════════════════════════════════════════════════════
-  # VIZ  (P4)  — se rellena en la semana 3
+  # VIZ  (P4)
   # ══════════════════════════════════════════════════════════
-  # grafana:     ./grafana     (paso 11)
+
+  # Un único datasource, PostgreSQL. Datasources y dashboards se
+  # aprovisionan desde ./grafana/provisioning (T4.4).
+  grafana:
+    <<: *comun
+    image: grafana/grafana-oss:12.4.3
+    container_name: pids_grafana
+    profiles: [viz]
+    depends_on:
+      postgres: {condition: service_healthy}
+    env_file: .env
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    ports:
+      - "${GRAFANA_PORT_HOST:-3000}:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_datos:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    mem_limit: 320m
 
 volumes:
   postgres_datos:
   minio_datos:
   kafka_datos:
+  airflow_datos:
+  grafana_datos:
 
 networks:
   pids:

@@ -1,0 +1,11 @@
+# Dependencias del servicio simulador (P2).
+
+pandas==3.0.6
+numpy==2.5.3
+
+# Sumidero postgres
+psycopg2-binary==2.9.13
+
+# Sumidero kafka. confluent-kafka y no kafka-python: es el cliente de
+# librdkafka, trae ruedas precompiladas y aguanta el ritmo del simulador.
+confluent-kafka==2.15.1
