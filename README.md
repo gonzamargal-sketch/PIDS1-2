@@ -11,6 +11,11 @@ poder trabajar los cuatro a la vez, en [`docs/TAREAS.md`](docs/TAREAS.md).
 Antes de tocar código, leed al menos las secciones 3.1, 3.2 y 3.3 de la
 arquitectura: condicionan lo que escribe cada uno.
 
+> **Estado actual:** P1 (almacenamiento y ciclo de vida), P2 (ingesta) y P4
+> (orquestación y Grafana) están **integradas en `main` y probadas juntas**.
+> **Falta P3** (la API y el router de consultas). Detalle en
+> [Estado de la integración](#estado-de-la-integración).
+
 ---
 
 ## Fases del proyecto
@@ -108,25 +113,30 @@ pids-parte2/
 │   ├── config.py            ·  variables de entorno en un solo sitio
 │   ├── esquema.py           ·  lectura y normalización del dataset
 │   ├── validacion.py        ·  reglas de calidad (rechazo / aviso)
-│   └── lakehouse.py         ·  tabla Iceberg: esquema, partición, ZSTD
+│   ├── lakehouse.py         ·  tabla Iceberg: esquema, partición, ZSTD
+│   └── mensajes.py          ·  formato de los mensajes de Kafka (P2)
 ├── postgres/init/           ← se ejecuta solo la PRIMERA vez que arranca
 │   ├── 01_esquema.sql       ·  tablas
 │   ├── 02_funciones.sql     ·  particiones, archivado, vistas de métricas
-│   └── 03_politicas.sql     ·  políticas de retención iniciales
+│   ├── 03_politicas.sql     ·  políticas de retención iniciales
+│   ├── 05_p2.sql            ·  índice de idempotencia de la cuarentena (P2)
+│   └── 07_p4.sql            ·  hot_stats y v_historico_por_tier (P4)
 ├── datos/
 │   └── muestra_1000.csv     ← semilla del simulador y fixture de tests
 ├── scripts/
-│   ├── prueba_humo.py       ·  verifica que el esqueleto está sano
-│   └── descargar_bronze.py  ·  descarga los 24,6M del portal (opcional)
+│   ├── prueba_humo.py              ·  verifica que el esqueleto está sano
+│   ├── prueba_archivado.py         ·  prueba end-to-end del ciclo de vida (P1)
+│   ├── generar_datos_sinteticos.py ·  CSV sintético con el esquema del portal
+│   └── descargar_bronze.py         ·  descarga los 24,6M del portal (opcional)
 ├── ingesta/
 │   ├── subir_bronze.py      ·  paso 4: dataset crudo → MinIO
 │   ├── carga_inicial.py     ·  paso 5: bronze → Iceberg
-│   └── consumidor_kafka.py  ·  paso 7 (P2): Kafka → PostgreSQL
-├── simulador/   (P2)  ← replay con jitter
-├── api/         (P3)  ← FastAPI y router de consultas
-├── archivado/   (P1)  ← job hot→cold con PyIceberg
-├── airflow/     (P4)  ← DAGs: transformaciones y traspasos entre tiers
-└── grafana/     (P4)  ← dashboards
+│   └── consumidor_kafka.py  ·  paso 7 (P2): Kafka → PostgreSQL + cuarentena
+├── simulador/   (P2)  ✅ replay con jitter; sumideros postgres y kafka
+├── archivado/   (P1)  ✅ job hot→cold (máquina de estados) y purga del frío
+├── airflow/     (P4)  ✅ 4 DAGs: particiones, archivar, estadísticas, purga
+├── grafana/     (P4)  ✅ datasource PostgreSQL y dashboard «E8 · Ciclo de vida»
+└── api/         (P3)  ⏳ PENDIENTE: de momento solo responde /health
 ```
 
 > **Las tareas que faltan, con su dueño y sus ficheros**, están en
@@ -325,15 +335,75 @@ columna.
 Cada paso pendiente está troceado en tareas con dueño, ficheros propios y
 criterio de «hecho» en [`docs/TAREAS.md`](docs/TAREAS.md).
 
-> **P4 añade `postgres/init/07_p4.sql`** (tabla `hot_stats` y vista
-> `v_historico_por_tier`, para la gráfica de filas por tier en el tiempo). Es
-> idempotente: si ya tenéis la base creada, **no hace falta `down -v`**, basta con
-> `docker compose exec -T postgres psql -U pids -d pids < postgres/init/07_p4.sql`.
->
-> Los DAGs `archivar` y `purga_final` ejecutan `python -m archivado.job_archivado`
-> y `python -m archivado.purga` desde `/opt/pids`: **P1, dejad los dos módulos
-> ejecutables así** y que salgan con código ≠ 0 si fallan. Mientras no existan,
-> las tareas salen como *skipped*, no en rojo.
+### Estado de la integración
+
+| Bloque | Rama | En `main` | Probado junto al resto |
+|---|---|---|---|
+| **P1** · Almacenamiento y ciclo de vida | `p1/almacenamiento` | ✅ | ✅ |
+| **P2** · Ingesta | `p2/ingesta` | ✅ | ✅ |
+| **P3** · Acceso (API y router) | — | ❌ **falta** | — |
+| **P4** · Orquestación y observabilidad | `p4/orquestacion` | ✅ | ✅ |
+
+Lo que se ha comprobado con las tres partes juntas:
+
+- `prueba_humo.py` y `prueba_archivado.py` terminan en `TODO CORRECTO`.
+- **P2 → caliente:** el simulador directo a PostgreSQL mete 20.000 eventos
+  (≈98,9% al caliente y el resto a cuarentena), con `event_time` = ahora, viajes
+  repartidos por 2020 y miles de importes distintos gracias al jitter.
+- **P2 por Kafka:** 10.000 mensajes emitidos = 10.000 recibidos por el
+  consumidor (caliente + cuarentena), sin duplicados.
+- **P4 → P1:** los cuatro DAGs cargan sin errores y corren en verde. Con la
+  política bajada a 5 minutos, el DAG `archivar` ejecuta el job de P1 y mueve
+  todas las particiones candidatas a Iceberg (`archival_jobs` en `DESALOJADO`,
+  `filas_origen = filas_escritas`), y `estadisticas_frio` actualiza
+  `cold_stats` y `hot_stats`.
+- **Grafana:** el datasource conecta y las 17 consultas del dashboard responden
+  sin error.
+
+**Lo que falta de P3** (ver T3.1-T3.3 en [`docs/TAREAS.md`](docs/TAREAS.md)):
+`/trips` con el router de tiers (`data_source` y `coverage`), `/metrics/{nombre}`,
+`/stats`, `/lifecycle/status`, `/lifecycle/policy` (GET y PUT) y la escritura en
+`query_log`. Hasta que esté, **la gráfica de latencias de Grafana sale vacía** y
+la política se cambia con un `UPDATE` en vez de con el `PUT`. Todo lo que
+necesita ya existe: las tablas, las vistas y los dos tiers con datos.
+
+### Poner al día una base que ya teníais creada
+
+Los SQL de P2 y P4 son idempotentes y **no hace falta `down -v`**:
+
+```bash
+docker compose exec -T postgres psql -U pids -d pids < postgres/init/05_p2.sql
+docker compose exec -T postgres psql -U pids -d pids < postgres/init/07_p4.sql
+docker restart pids_grafana     # para que cargue el datasource y el dashboard
+```
+
+Sin `05_p2.sql` el consumidor falla al escribir en cuarentena, y sin
+`07_p4.sql` falla el DAG `estadisticas_frio`.
+
+### Comprobar que todo funciona junto
+
+```bash
+python scripts/prueba_humo.py               # → TODO CORRECTO
+python scripts/prueba_archivado.py          # → TODO CORRECTO
+
+# Ciclo E8 completo a través de Airflow
+docker compose --profile core --profile orch --profile viz up -d
+docker compose exec postgres psql -U pids -d pids -c \
+  "UPDATE retention_policy SET umbral_valor=5, umbral_unidad='minutes' WHERE accion='ARCHIVE';"
+docker compose exec airflow airflow dags trigger archivar
+docker compose exec postgres psql -U pids -d pids -c \
+  "SELECT estado, count(*), sum(filas_origen), sum(filas_escritas) FROM archival_jobs GROUP BY 1;"
+# y en http://localhost:3000 el dashboard «E8 · Ciclo de vida de los datos»
+```
+
+Al acabar, volved a dejar la política en `30` / `days`.
+
+> **Aviso para el vídeo.** Las particiones del caliente son diarias y
+> `particiones_a_archivar()` solo devuelve días **anteriores** al corte. Aunque
+> se baje la política a 5 minutos, lo que el simulador escribe hoy no se
+> archiva hasta mañana. Para grabar la migración hace falta tener datos de días
+> anteriores: dejar el simulador corriendo desde el día antes o sembrarlos (lo
+> que hace `prueba_humo.py`).
 
 > **El jitter del simulador (paso 6) no es un adorno.** Si amplifica repitiendo
 > las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,
