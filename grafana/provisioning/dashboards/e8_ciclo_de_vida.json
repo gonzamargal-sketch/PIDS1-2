@@ -1,0 +1,1353 @@
+{
+  "uid": "pids-e8",
+  "title": "E8 · Ciclo de vida de los datos",
+  "description": "Retención y ciclo de vida: caliente (PostgreSQL) → frío (Iceberg) → borrado.",
+  "tags": [
+    "pids",
+    "e8"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "schemaVersion": 41,
+  "version": 1,
+  "panels": [
+    {
+      "type": "text",
+      "id": 1,
+      "title": "",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 3
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**E8 · Retención y ciclo de vida.** Los viajes entran en **PostgreSQL** (caliente: rápido y caro), envejecen según `event_time` y, cuando superan el umbral de la política, Airflow los **muda a Iceberg** sobre MinIO (frío: lento y barato). La política es una fila de `retention_policy`: se cambia con un `PUT /lifecycle/policy`, sin redesplegar."
+      }
+    },
+    {
+      "type": "row",
+      "id": 2,
+      "title": "0 · La política vigente y si se cumple",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 3
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Umbral de archivado",
+      "description": "Lo que marca retention_policy para ARCHIVE. Cambiarlo es un UPDATE, no un redeploy.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT umbral_valor || ' ' || umbral_unidad AS \"caliente → frío\"\nFROM retention_policy\nWHERE dataset = 'trips' AND accion = 'ARCHIVE' AND activa"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Custodia en frío",
+      "description": "Pasado este plazo, purga_final borra de Iceberg y expire_snapshots libera los ficheros.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 5,
+        "y": 4,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT umbral_valor || ' ' || umbral_unidad AS \"frío → borrado\"\nFROM retention_policy\nWHERE dataset = 'trips' AND accion = 'DELETE' AND activa"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "Registro más antiguo en caliente",
+      "description": "Métrica 5 de §7. Edad por event_time del registro más viejo que sigue en PostgreSQL. El archivado mueve días completos, así que puede superar el umbral en hasta un día.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 4,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT EXTRACT(EPOCH FROM NOW() - MIN(event_time)) AS \"edad\"\nFROM taxi_trips"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dtdurations",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "Cumplimiento de la política",
+      "description": "v_cumplimiento_politica: la edad máxima en caliente frente al umbral. INCUMPLE = el archivado va atrasado.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 15,
+        "y": 4,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT estado FROM v_cumplimiento_politica"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "OK": {
+                  "text": "OK",
+                  "color": "green",
+                  "index": 0
+                },
+                "INCUMPLE": {
+                  "text": "INCUMPLE",
+                  "color": "red",
+                  "index": 1
+                },
+                "SIN DATOS": {
+                  "text": "SIN DATOS",
+                  "color": "gray",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "gray",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 7,
+      "title": "Particiones pendientes de mudar",
+      "description": "particiones_a_archivar(): días que superan el umbral y siguen en caliente. Tras bajar el umbral sube, y baja a cero a medida que el DAG archivar las mueve.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 4,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS \"pendientes\" FROM particiones_a_archivar()"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              },
+              {
+                "value": 5,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "row",
+      "id": 8,
+      "title": "1 · Los datos envejecen y se mudan de caliente a frío",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "Filas por tier en el tiempo",
+      "description": "Métrica 1 de §7. Fotos de hot_stats y cold_stats que deja el DAG estadisticas_frio cada 5 minutos. Cuando se archiva, la franja naranja adelgaza y la azul engorda.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 16,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(medido_en, $__interval, previous),\n       CASE tier WHEN 'hot' THEN 'Caliente · PostgreSQL' ELSE 'Frío · Iceberg' END AS metric,\n       MAX(filas) AS filas\nFROM v_historico_por_tier\nWHERE $__timeFilter(medido_en)\nGROUP BY 1, 2\nORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "spanNulls": true,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "(?i).*(hot|caliente).*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "(?i).*(cold|fr[ií]o).*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 10,
+      "title": "Máquina de estados del archivado",
+      "description": "archival_jobs, lo último primero. Una partición solo se desaloja de PostgreSQL después de VERIFICADO: los conteos de Iceberg tienen que cuadrar con los de origen.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 9,
+        "w": 8,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT particion, estado, filas_origen, filas_escritas, intentos,\n       actualizado_en AS \"actualizado\", error\nFROM archival_jobs\nORDER BY actualizado_en DESC\nLIMIT 50"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "estado"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "PENDIENTE": {
+                        "color": "gray",
+                        "index": 0
+                      },
+                      "ESCRIBIENDO": {
+                        "color": "yellow",
+                        "index": 1
+                      },
+                      "ESCRITO": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "VERIFICADO": {
+                        "color": "blue",
+                        "index": 3
+                      },
+                      "DESALOJADO": {
+                        "color": "green",
+                        "index": 4
+                      },
+                      "ERROR": {
+                        "color": "red",
+                        "index": 5
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "type": "row",
+      "id": 11,
+      "title": "2 · Lo antiguo es barato: coste de almacenamiento por tier",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "panels": []
+    },
+    {
+      "type": "barchart",
+      "id": 12,
+      "title": "Bytes por fila: PostgreSQL vs Iceberg",
+      "description": "Métrica 2 de §7, la estrella de E8 (v_coste_por_tier). El mismo viaje ocupa mucho más en caliente (cabecera de tupla, alineamiento, índices) que en Parquet+ZSTD. Con pocas filas el caliente sale inflado por el coste fijo de página: medir con millones.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 10,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE tier WHEN 'hot' THEN 'Caliente · PostgreSQL' ELSE 'Frío · Iceberg' END AS tier,\n       bytes_por_fila AS \"bytes por fila\"\nFROM v_coste_por_tier\nORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bytes por fila"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "tier",
+        "showValue": "always",
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "barWidth": 0.7,
+        "groupWidth": 0.7,
+        "tooltip": {
+          "mode": "single"
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 13,
+      "title": "Ratio de compresión del frío",
+      "description": "Métrica 4 de §7. Cuántas veces menos ocupa una fila en Iceberg que en PostgreSQL (bytes por fila del caliente / del frío). Datos sin jitter lo inflarían a ~35x.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 10,
+        "y": 19,
+        "w": 5,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ROUND(MAX(bytes_por_fila) FILTER (WHERE tier = 'hot')\n           / NULLIF(MAX(bytes_por_fila) FILTER (WHERE tier = 'cold'), 0), 1) AS \"ratio\"\nFROM v_coste_por_tier"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:x",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "value": 2,
+                "color": "orange"
+              },
+              {
+                "value": 4,
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 14,
+      "title": "Ocupación por tier",
+      "description": "Bytes totales en cada tier ahora mismo (v_coste_por_tier).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 15,
+        "y": 19,
+        "w": 9,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE tier WHEN 'hot' THEN 'Caliente · PostgreSQL' ELSE 'Frío · Iceberg' END AS tier,\n       bytes, filas\nFROM v_coste_por_tier"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "filas"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/.*/",
+          "values": true
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value_and_name",
+        "orientation": "vertical"
+      }
+    },
+    {
+      "type": "barchart",
+      "id": 15,
+      "title": "Frío por partición mensual",
+      "description": "Última medición de cold_stats: filas y bytes de cada mes de event_time en Iceberg.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT to_char(particion_mes, 'YYYY-MM') AS mes, filas, bytes\nFROM cold_stats\nWHERE particion_mes IS NOT NULL\n  AND medido_en = (SELECT MAX(medido_en) FROM cold_stats)\nORDER BY particion_mes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "filas"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "vertical",
+        "xField": "mes",
+        "showValue": "never",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 16,
+      "title": "3 · Lo reciente es rápido: latencia por tier frente a los SLAs",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 17,
+      "title": "Latencia p95 por tier",
+      "description": "Métrica 3 de §7, de query_log (la escribe la API en cada consulta). Líneas de SLA: PostgreSQL < 500 ms, Iceberg < 10 s. Escala logarítmica.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 14,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroupAlias(ocurrido_en, $__interval),\n       data_source AS metric,\n       PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latencia_ms) AS p95\nFROM query_log\nWHERE $__timeFilter(ocurrido_en)\nGROUP BY 1, 2\nORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 500,
+                "color": "orange"
+              },
+              {
+                "value": 10000,
+                "color": "red"
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "thresholdsStyle": {
+              "mode": "line+area"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "(?i).*(hot|caliente).*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "(?i).*(cold|fr[ií]o).*"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "mixto"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "table",
+      "id": 18,
+      "title": "Percentiles por tier",
+      "description": "p50/p95/p99 en el rango del dashboard. En verde si el p95 cumple el SLA de su tier.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 35,
+        "w": 10,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT data_source AS tier,\n       COUNT(*) AS consultas,\n       ROUND((PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY latencia_ms))::NUMERIC, 1) AS p50_ms,\n       ROUND((PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latencia_ms))::NUMERIC, 1) AS p95_ms,\n       ROUND((PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY latencia_ms))::NUMERIC, 1) AS p99_ms,\n       CASE data_source WHEN 'hot' THEN 500 ELSE 10000 END AS sla_ms,\n       CASE WHEN PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latencia_ms)\n                 <= CASE data_source WHEN 'hot' THEN 500 ELSE 10000 END\n            THEN 'CUMPLE' ELSE 'INCUMPLE' END AS sla\nFROM query_log\nWHERE $__timeFilter(ocurrido_en)\nGROUP BY data_source\nORDER BY p95_ms"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sla"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "CUMPLE": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "INCUMPLE": {
+                        "color": "red",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 19,
+      "title": "p95 caliente (SLA 500 ms)",
+      "description": "p95 de las consultas servidas solo por PostgreSQL.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 40,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latencia_ms) AS \"p95\"\nFROM query_log\nWHERE data_source = 'hot' AND $__timeFilter(ocurrido_en)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 500,
+                "color": "red"
+              }
+            ]
+          },
+          "noValue": "sin consultas"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "id": 20,
+      "title": "p95 frío (SLA 10 s)",
+      "description": "p95 de las consultas servidas solo por Iceberg.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 40,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latencia_ms) AS \"p95\"\nFROM query_log\nWHERE data_source = 'cold' AND $__timeFilter(ocurrido_en)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 10000,
+                "color": "red"
+              }
+            ]
+          },
+          "noValue": "sin consultas"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "row",
+      "id": 21,
+      "title": "4 · Calidad de entrada",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 22,
+      "title": "Registros en cuarentena",
+      "description": "Métrica 6 de §7. Rechazados por el contrato de datos sobre todo lo recibido: cuarentena + caliente + lo ya mudado a frío (archival_jobs DESALOJADO).",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 45,
+        "w": 6,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH c AS (SELECT COUNT(*) AS n FROM trips_cuarentena),\n     h AS (SELECT COUNT(*) AS n FROM taxi_trips),\n     a AS (SELECT COALESCE(SUM(filas_escritas), 0) AS n\n             FROM archival_jobs WHERE estado = 'DESALOJADO')\nSELECT 100.0 * c.n / NULLIF(c.n + h.n + a.n, 0) AS \"cuarentena\"\nFROM c, h, a"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "value": 5,
+                "color": "orange"
+              },
+              {
+                "value": 10,
+                "color": "red"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "value",
+        "orientation": "auto"
+      }
+    },
+    {
+      "type": "barchart",
+      "id": 23,
+      "title": "Motivos de rechazo",
+      "description": "v_calidad: cuántos registros ha rechazado cada regla. Un registro puede tener varios.",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "pids-postgres"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 45,
+        "w": 18,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "pids-postgres"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT motivo, registros FROM v_calidad ORDER BY registros DESC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xField": "motivo",
+        "showValue": "always",
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  }
+}
