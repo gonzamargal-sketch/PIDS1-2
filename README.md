@@ -308,6 +308,12 @@ columna.
 Cada paso pendiente está troceado en tareas con dueño, ficheros propios y
 criterio de «hecho» en [`docs/TAREAS.md`](docs/TAREAS.md).
 
+> **El jitter del simulador (paso 6) no es un adorno.** Si amplifica repitiendo
+> las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,
+> porque la codificación por diccionario de Parquet comprime valores idénticos
+> casi a coste cero. Ese 35x es indefendible frente a los benchmarks
+> publicados. Con jitter los números son honestos.
+
 > **P2 añade `postgres/init/05_p2.sql`** (índice único que hace idempotente la
 > cuarentena frente a reentregas de Kafka). Es idempotente: sobre una base ya
 > creada basta con
@@ -316,12 +322,6 @@ criterio de «hecho» en [`docs/TAREAS.md`](docs/TAREAS.md).
 >
 > Para llenar el caliente rápido, sin Kafka (~3.500 filas/s):
 > `docker compose run --rm simulador python -m simulador.simulador --sumidero postgres --eps 0 --total 1000000`
-
-> **El jitter del simulador (paso 6) no es un adorno.** Si amplifica repitiendo
-> las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,
-> porque la codificación por diccionario de Parquet comprime valores idénticos
-> casi a coste cero. Ese 35x es indefendible frente a los benchmarks
-> publicados. Con jitter los números son honestos.
 
 ---
 
