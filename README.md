@@ -218,6 +218,23 @@ SELECT * FROM particiones_a_archivar();   -- candidatas según la política
 SELECT desalojar_particion('2026-08-12'); -- falla si no está VERIFICADO
 ```
 
+El job que recorre la máquina de estados y la purga del frío viven en
+`archivado/` (P1). Los dos se pueden relanzar cuando se quiera: retoman desde el
+estado guardado y no duplican nada.
+
+```bash
+python archivado/job_archivado.py --simulacro   # qué particiones archivaría
+python archivado/job_archivado.py               # caliente -> Iceberg -> DROP
+python archivado/purga.py --simulacro           # qué meses borraría del frío
+python archivado/purga.py                       # DELETE + expire_snapshots
+
+python scripts/prueba_archivado.py              # prueba end-to-end: TODO CORRECTO
+```
+
+Desde Airflow: `/opt/pids-venv/bin/python -m archivado.job_archivado` y
+`-m archivado.purga`. El job sale con código 1 si alguna partición acaba en
+`ERROR`, para que el DAG la marque en rojo y la reintente.
+
 ### Consultas útiles
 
 ```sql
@@ -299,7 +316,7 @@ columna.
 | 5 | Tabla Iceberg y carga inicial | P1 | ✅ |
 | 6 | Simulador con jitter | P2 | pendiente |
 | 7 | Consumidor de Kafka → caliente + cuarentena | P2 | pendiente |
-| 8 | Job de archivado con PyIceberg | P1 | pendiente |
+| 8 | Job de archivado con PyIceberg | P1 | ✅ |
 | 9 | DAGs de Airflow | P4 | pendiente |
 | 10 | API y router de consultas | P3 | pendiente |
 | 11 | Dashboards de Grafana | P4 | pendiente |
