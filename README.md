@@ -5,6 +5,10 @@ dataset NYC Yellow Taxi con **datos de 2026**: del 1 de enero hasta hoy,
 generados a partir de mil viajes reales del portal (ver
 [Datos de trabajo](#datos-de-trabajo-2026)).
 
+**Para levantarlo todo y verlo funcionar, seguid la
+[guía de funcionamiento](docs/GUIA.md)**: comandos en orden, qué comprobar y la
+demo del ciclo de vida. Se mantiene al día según entra cada parte.
+
 Toda la documentación está en [`docs/`](docs/): el diseño en
 [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md), el reparto por bloques en
 [`docs/REPARTO.md`](docs/REPARTO.md) y las tareas pendientes, ya troceadas para
@@ -106,6 +110,7 @@ Luego `wsl --shutdown` desde PowerShell para que tome efecto.
 ```
 pids-parte2/
 ├── docs/                    ← TODA la documentación vive aquí
+│   ├── GUIA.md              ·  guía de funcionamiento: comandos, comprobaciones, demo
 │   ├── ARQUITECTURA.md      ·  el documento de diseño. Leerlo primero.
 │   ├── REPARTO.md           ·  qué bloque es de quién
 │   └── TAREAS.md            ·  las tareas pendientes, troceadas y sin solapes
