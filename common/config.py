@@ -82,6 +82,9 @@ class Iceberg:
 class Kafka:
     bootstrap: str = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
     topic_trips: str = os.getenv("KAFKA_TOPIC_TRIPS", "trips.raw")
+    grupo_consumidor: str = os.getenv("KAFKA_GRUPO_CONSUMIDOR", "pids-consumidor")
+    # Mensajes por transacción en PostgreSQL (y por commit de offsets)
+    lote_consumidor: int = _i("CONSUMIDOR_LOTE", 500)
 
 
 @dataclass(frozen=True)
