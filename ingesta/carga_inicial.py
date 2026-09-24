@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
 """
-PIDS Parte 2 — Paso 5: carga inicial BRONZE -> ICEBERG (tier frío).
+PIDS Parte 2 — Paso 5: carga inicial BRONZE -> tiers.
 
-    bronze (crudo)  ->  contrato de datos  ->  Iceberg
-                                 |
-                                 +----------->  trips_cuarentena
+    bronze (crudo)  ->  contrato de datos  ->  Iceberg      (más viejo que la política)
+                                 |         ->  PostgreSQL   (dentro de la política)
+                                 +-------->  trips_cuarentena
 
-POR QUÉ VA DIRECTO AL FRÍO Y NO PASA POR POSTGRESQL
-    Los datos son de 2020 y estamos en 2026, así que por `event_time`
-    son históricos por definición: no tiene sentido meterlos en el tier
-    caliente para archivarlos acto seguido. Esto nos da un tier frío
-    poblado desde el minuto uno, y el movimiento caliente->frío lo
-    aporta el simulador, que re-estampa los tiempos a "ahora".
+CADA FILA VA AL TIER QUE LE TOCA POR EDAD
+    Los datos son de 2026, desde el 1 de enero hasta hoy (los genera
+    scripts/generar_datos_sinteticos.py). Aquí event_time =
+    tpep_pickup_datetime, porque para el histórico el tiempo de sistema y
+    el de negocio coinciden, y con eso se decide el tier con la MISMA
+    regla que particiones_a_archivar():
 
-    Aquí event_time = tpep_pickup_datetime, porque para el histórico el
-    tiempo de sistema y el de negocio coinciden.
+        día de event_time <  (ahora - umbral ARCHIVE)::date  ->  Iceberg
+        el resto                                              ->  PostgreSQL
+
+    Así el reparto queda como si el sistema llevara funcionando desde
+    enero: el frío con el histórico, el caliente con los últimos días, sin
+    solape (el modelo mudanza). Y como el caliente ya tiene días
+    anteriores a hoy, en cuanto se baja la política el job de archivado
+    tiene particiones que mover.
 
 Uso:
     python ingesta/carga_inicial.py                  # todo lo de bronze
     python ingesta/carga_inicial.py --max-filas 5000 # prueba rápida
-    python ingesta/carga_inicial.py --local datos/muestra_1000.csv
-    python ingesta/carga_inicial.py --recrear        # borra y rehace la tabla
+    python ingesta/carga_inicial.py --local datos/sinteticos/sintetico_3000000.csv
+    python ingesta/carga_inicial.py --recrear        # borra la carga anterior y la rehace
 """
 
 from __future__ import annotations
@@ -52,8 +58,9 @@ logging.basicConfig(level=logging.INFO,
                     datefmt="%H:%M:%S")
 log = logging.getLogger("carga")
 
-PREFIJO = "nyc-taxi/2020"
+PREFIJO = "nyc-taxi/2026"
 LOTE = 200_000        # filas por append a Iceberg
+LOTE_PG = 5_000       # filas por INSERT en PostgreSQL
 
 
 def cliente_s3():
@@ -123,8 +130,46 @@ def preparar(df: pd.DataFrame, avisos, fichero: str) -> pd.DataFrame:
     return v
 
 
+def conectar_pg():
+    conn = psycopg2.connect(**PG.kwargs)
+    with conn.cursor() as cur:
+        # Las particiones diarias van a medianoche UTC
+        cur.execute("SET TIME ZONE 'UTC'")
+    conn.commit()
+    return conn
+
+
+def dia_de_corte(conn) -> "pd.Timestamp":
+    """Primer día que se queda en caliente, con la política vigente."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT (NOW() - umbral_intervalo('trips','ARCHIVE'))::date")
+        corte = cur.fetchone()[0]
+    conn.commit()
+    return pd.Timestamp(corte)
+
+
+def a_postgres(conn, v: pd.DataFrame) -> int:
+    """Inserta en el caliente, creando antes las particiones diarias."""
+    if v.empty:
+        return 0
+    cols = (["trip_id", "event_time"] + esquema.COLUMNAS_NEGOCIO
+            + ["origen", "fichero_origen", "esquema_version", "avisos"])
+    with conn.cursor() as cur:
+        for dia in sorted(v["event_time"].dt.date.unique()):
+            cur.execute("SELECT crear_particion_dia(%s)", (dia,))
+        datos = v[cols].astype(object).where(v[cols].notna(), None)
+        datos["avisos"] = [list(a) for a in v["avisos"]]
+        psycopg2.extras.execute_values(
+            cur,
+            f"INSERT INTO taxi_trips ({', '.join(cols)}) VALUES %s",
+            datos.itertuples(index=False, name=None), page_size=LOTE_PG)
+    conn.commit()
+    return len(v)
+
+
 def cargar(max_filas: int | None, local: Path | None, recrear: bool) -> int:
     cat = lakehouse.obtener_catalogo()
+    conn = conectar_pg()
 
     if recrear:
         try:
@@ -132,6 +177,15 @@ def cargar(max_filas: int | None, local: Path | None, recrear: bool) -> int:
             log.warning("Tabla %s eliminada", ICEBERG.identificador)
         except Exception:
             pass
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM taxi_trips WHERE origen = 'carga_inicial'")
+            log.warning("%s filas de una carga anterior borradas del caliente",
+                        f"{cur.rowcount:,}")
+        conn.commit()
+
+    corte = dia_de_corte(conn)
+    log.info("Reparto por edad: antes del %s -> Iceberg, desde ese día -> PostgreSQL",
+             corte.date())
 
     tabla = lakehouse.obtener_tabla(cat)
     antes = lakehouse.estadisticas(tabla)
@@ -150,7 +204,7 @@ def cargar(max_filas: int | None, local: Path | None, recrear: bool) -> int:
         fuentes = [("bronze", Path(k).name,
                     (lambda k=k: leer_de_bronze(s3, k, max_filas))) for k in claves]
 
-    total_ok = total_ko = 0
+    total_ok = total_ko = total_pg = 0
 
     for origen, nombre, leer in fuentes:
         log.info("─" * 60)
@@ -172,6 +226,12 @@ def cargar(max_filas: int | None, local: Path | None, recrear: bool) -> int:
 
         v = preparar(res.validos, res.validos["avisos"], nombre)
 
+        caliente = v["event_time"] >= corte
+        n_pg = a_postgres(conn, v.loc[caliente])
+        total_pg += n_pg
+        log.info("  %s filas al caliente (PostgreSQL)", f"{n_pg:,}")
+        v = v.loc[~caliente]
+
         # Escribir por lotes: ficheros grandes desde el principio, que es
         # como evitamos el problema de los ficheros pequeños sin compactar
         for ini in range(0, len(v), LOTE):
@@ -181,10 +241,12 @@ def cargar(max_filas: int | None, local: Path | None, recrear: bool) -> int:
             log.info("  append %s filas (acumulado %s)",
                      f"{len(trozo):,}", f"{total_ok:,}")
 
+    conn.close()
     despues = lakehouse.estadisticas(tabla)
     log.info("═" * 60)
     log.info("CARGA INICIAL TERMINADA")
     log.info("  insertadas en Iceberg : %s", f"{total_ok:,}")
+    log.info("  insertadas en caliente: %s", f"{total_pg:,}")
     log.info("  a cuarentena          : %s", f"{total_ko:,}")
     log.info("  tabla ahora           : %s filas, %s ficheros, %s particiones",
              f"{despues['filas']:,}", despues["ficheros"], despues["particiones"])
@@ -204,7 +266,8 @@ def main() -> int:
     p.add_argument("--local", type=Path, default=None,
                    help="Cargar un CSV local en vez de bronze")
     p.add_argument("--recrear", action="store_true",
-                   help="Borra la tabla Iceberg y la vuelve a crear")
+                   help="Borra la tabla Iceberg y la carga anterior del caliente, "
+                        "y lo vuelve a cargar todo")
     a = p.parse_args()
     return cargar(a.max_filas, a.local, a.recrear)
 

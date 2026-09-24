@@ -3,7 +3,7 @@ PIDS Parte 2 — Sumidero Kafka del simulador (P2, T2.3).
 
 Publica cada viaje en trips.raw como JSON, con las dos columnas de tiempo
 desde el primer mensaje (§3.1): event_time "ahora" y la fecha de negocio
-en 2020. Lo recoge ingesta/consumidor_kafka.py.
+del viaje, que acaba de terminar. Lo recoge ingesta/consumidor_kafka.py.
 
 Implementa la interfaz de sumidero que fija simulador.py; no lo toca.
 

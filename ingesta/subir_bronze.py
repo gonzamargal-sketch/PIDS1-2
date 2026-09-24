@@ -6,7 +6,7 @@ Sube los ficheros del dataset a MinIO TAL CUAL, sin tocarlos. Bronze es
 la copia cruda e inmutable: si más adelante descubrimos que el contrato
 de datos estaba mal, se reprocesa desde aquí sin volver a descargar nada.
 
-    datos/*.csv  ->  s3://bronze/nyc-taxi/2020/<fichero>
+    datos/*.csv  ->  s3://bronze/nyc-taxi/2026/<fichero>
 
 Uso:
     python ingesta/subir_bronze.py                    # sube datos/*.csv
@@ -38,7 +38,7 @@ logging.basicConfig(level=logging.INFO,
                     datefmt="%H:%M:%S")
 log = logging.getLogger("bronze")
 
-PREFIJO = "nyc-taxi/2020"
+PREFIJO = "nyc-taxi/2026"
 
 
 def cliente_s3():

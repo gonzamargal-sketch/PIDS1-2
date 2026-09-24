@@ -16,7 +16,7 @@ taxi_trips o en trips_cuarentena.
 FORMATO DEL MENSAJE (esquema_version 1.0)
     trip_id                UUID generado por el simulador
     event_time             ISO 8601 con zona: tiempo de SISTEMA, "ahora"
-    tpep_pickup_datetime   ISO 8601 sin zona: tiempo de NEGOCIO, 2020
+    tpep_pickup_datetime   ISO 8601 sin zona: tiempo de NEGOCIO (UTC)
     tpep_dropoff_datetime  ISO 8601 sin zona
     <resto de COLUMNAS_NEGOCIO>   números JSON o null
     esquema_version        "1.0"

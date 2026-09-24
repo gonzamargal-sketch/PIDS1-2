@@ -21,8 +21,12 @@ lanzará Airflow) y PyIceberg de verdad:
 Como prueba_humo.py, parte de una base limpia: BORRA las particiones
 diarias, taxi_trips y archival_jobs. No la lancéis en la máquina donde
 tengáis los datos del vídeo. En Iceberg solo toca sus propias filas
-(fichero_origen = 'prueba_archivado'), así que la carga inicial no se
-pierde. Al terminar restaura la política y las particiones de adelanto.
+(fichero_origen = 'prueba_archivado') y los cinco días que usa, así que
+el resto del histórico no se pierde. Al terminar restaura la política y
+las particiones de adelanto.
+
+Pausad el DAG `archivar` de Airflow mientras corre: con la política
+bajada a 5 minutos, archivaría a la vez las particiones de la prueba.
 
 Uso:
     python scripts/prueba_archivado.py
@@ -41,12 +45,12 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 import psycopg2.extras
 import pandas as pd
-from pyiceberg.expressions import EqualTo
+from pyiceberg.expressions import EqualTo, Or
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import esquema, validacion, lakehouse   # noqa: E402
 from common.config import PG                         # noqa: E402
-from archivado.job_archivado import rango_dia        # noqa: E402
+from archivado.job_archivado import rango_dia, filtro_dia   # noqa: E402
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
 
@@ -99,8 +103,13 @@ def job(cur, dia) -> dict:
     return cur.fetchone() or {}
 
 
-def limpiar(cur, conn, tabla) -> None:
-    """Base como recién creada: mismo criterio que prueba_humo.limpiar()."""
+def limpiar(cur, conn, tabla, dias) -> None:
+    """Base como recién creada: mismo criterio que prueba_humo.limpiar().
+
+    En Iceberg se borran, además de las filas de pruebas anteriores, los
+    días que usa la prueba: si alguien archivó antes esos días (el DAG
+    archivar con la política bajada), el conteo del frío no partiría de 0.
+    """
     cur.execute("""SELECT c.relname FROM pg_class c
                    JOIN pg_inherits i ON i.inhrelid = c.oid
                    JOIN pg_class pa   ON pa.oid = i.inhparent
@@ -110,15 +119,18 @@ def limpiar(cur, conn, tabla) -> None:
         cur.execute(f'DROP TABLE IF EXISTS "{r["relname"]}"')
     cur.execute("TRUNCATE taxi_trips, archival_jobs")
     conn.commit()
-    borrar_de_iceberg(tabla)
+    borrar_de_iceberg(tabla, dias)
 
 
-def borrar_de_iceberg(tabla) -> None:
+def borrar_de_iceberg(tabla, dias=()) -> None:
     import warnings
+    filtro = EqualTo("fichero_origen", MARCA)
+    for d in dias:
+        filtro = Or(filtro, filtro_dia(d))
     tabla.refresh()
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", "Delete operation did not match")
-        tabla.delete(EqualTo("fichero_origen", MARCA))
+        tabla.delete(filtro)
 
 
 def sembrar(cur, conn, validos: pd.DataFrame, reparto: dict) -> dict:
@@ -186,9 +198,9 @@ def _prueba(args, conn, cur) -> int:
     # ── 1. Siembra ────────────────────────────────────────────
     seccion("1. SIEMBRA")
     tabla = lakehouse.obtener_tabla()
-    limpiar(cur, conn, tabla)
-    comprobar(True, "Base limpia: particiones, taxi_trips, archival_jobs y "
-                    "filas de pruebas anteriores en Iceberg")
+    limpiar(cur, conn, tabla, viejos + [d_error, hoy])
+    comprobar(True, "Base limpia: particiones, taxi_trips, archival_jobs y, en "
+                    "Iceberg, los días que usa la prueba")
 
     validos = validacion.validar(esquema.leer_csv(CSV)).validos
     reparto = {d_normal: 250, d_caida1: 200, d_caida2: 150, hoy: 100}

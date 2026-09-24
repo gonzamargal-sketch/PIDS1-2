@@ -114,7 +114,8 @@ def main() -> int:
     # La trampa del formato americano: si se hubiera inferido mal, enero
     # y los días 1-12 saldrían intercambiados
     comprobar(
-        df["tpep_pickup_datetime"].dt.year.between(2019, 2021).all(),
+        df["tpep_pickup_datetime"].dt.year.between(validacion.FECHA_MIN.year,
+                                                   datetime.now(timezone.utc).year).all(),
         "Fechas en el rango esperado (el formato americano no se ha confundido)",
     )
 

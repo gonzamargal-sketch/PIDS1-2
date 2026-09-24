@@ -8,6 +8,17 @@ construyendo, quién hace qué, y por qué cada decisión es la que es.
 **Plazo:** 3 semanas. **Equipo:** 4 personas.
 **Entregables:** código funcionando + memoria + vídeo de 5-10 min.
 
+> **Cambio posterior: los datos de trabajo son de 2026.** La muestra de mil
+> viajes se ha movido de enero de 2020 a enero de 2026, el histórico en volumen
+> lo genera `scripts/generar_datos_sinteticos.py` (del 1 de enero hasta ahora,
+> nunca en el futuro) y el simulador emite viajes que acaban de terminar. La
+> validación acepta recogidas desde 2025-12 hasta «ahora». La carga inicial ya
+> no va toda al frío: reparte por edad con la política (lo anterior al corte a
+> Iceberg, los últimos días a PostgreSQL). La separación `event_time` /
+> `tpep_pickup_datetime` de §3.1 se mantiene: el ciclo de vida sigue
+> gobernándolo solo `event_time`. Donde este documento dice «2020», léase la
+> fecha de negocio del viaje.
+
 ---
 
 ## 0. Alcance: fase 1

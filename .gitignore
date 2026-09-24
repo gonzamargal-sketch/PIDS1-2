@@ -38,3 +38,6 @@ airflow/standalone_admin_password.txt
 
 # Restos de la primera versión (E5+E8). No van al repo.
 _viejo/
+
+# Datos sintéticos generados (se regeneran con scripts/generar_datos_sinteticos.py)
+datos/sinteticos/

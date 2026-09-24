@@ -1,10 +1,11 @@
 """
 PIDS Parte 2 — Contrato de datos: reglas de calidad.
 
-Las reglas salen de perfilar el dataset real, no de imaginarlo. Sobre la
-muestra de 1.000 filas falla el 3,7%, y en el dataset completo de 24,6M
-hay cosas peores: viajes fechados en 2002, tarifas de 998.310 $ y unos
-810.000 nulos repartidos en seis columnas.
+Las reglas salen de perfilar el dataset real de 2020, no de imaginarlo.
+Sobre la muestra de 1.000 filas falla el 3,7%, y en el dataset completo de
+24,6M había cosas peores: viajes fechados en 2002, tarifas de 998.310 $ y
+unos 810.000 nulos repartidos en seis columnas. Los datos del proyecto se
+han movido a 2026, pero conservan esas anomalías.
 
 Por eso NO inyectamos suciedad falsa para las anomalías que ya existen.
 Los importes negativos son devoluciones reales y las distancias cero son
@@ -32,10 +33,25 @@ import pandas as pd
 # consumidor de Kafka, el simulador o la API sin arrastrar el módulo entero.
 # ─────────────────────────────────────────────────────────────
 
-# El dataset dice "2020" pero trae viajes de 2002 a 2021. Damos margen a
-# ambos lados para los viajes de fin de año, y cortamos el resto.
-FECHA_MIN = pd.Timestamp("2019-12-01")
-FECHA_MAX = pd.Timestamp("2021-02-01")
+# Los datos del proyecto son de 2026: la muestra, el generador sintético y
+# el simulador. Se da un mes de margen por detrás para los viajes de fin de
+# año, y por delante el límite es AHORA: un viaje no puede haber empezado en
+# el futuro. Ese límite se mueve solo con los días, por eso es una función
+# y no una constante. Los tiempos se tratan en UTC, igual que en PostgreSQL.
+FECHA_MIN = pd.Timestamp("2025-12-01")
+# Holgura frente a relojes algo adelantados entre contenedores
+TOLERANCIA_FUTURO = pd.Timedelta(minutes=5)
+
+
+def fecha_max() -> pd.Timestamp:
+    """Último instante válido para tpep_pickup_datetime (UTC, sin zona)."""
+    return pd.Timestamp.now(tz="UTC").tz_localize(None) + TOLERANCIA_FUTURO
+
+
+def _fuera_de_rango(s: pd.Series) -> pd.Series:
+    if getattr(s.dt, "tz", None) is not None:
+        s = s.dt.tz_convert("UTC").dt.tz_localize(None)
+    return s.isna() | (s < FECHA_MIN) | (s > fecha_max())
 
 IMPORTE_MAX = 10_000.0      # el máximo real del dataset es 998.310,03
 DISTANCIA_MAX = 500.0       # millas
@@ -73,10 +89,8 @@ def _velocidad_mph(df: pd.DataFrame) -> pd.Series:
 REGLAS: list[Regla] = [
     Regla(
         "fecha_fuera_de_rango", RECHAZO,
-        f"tpep_pickup_datetime fuera de {FECHA_MIN.date()}..{FECHA_MAX.date()}",
-        lambda d: d["tpep_pickup_datetime"].isna()
-                  | (d["tpep_pickup_datetime"] < FECHA_MIN)
-                  | (d["tpep_pickup_datetime"] > FECHA_MAX),
+        f"tpep_pickup_datetime anterior a {FECHA_MIN.date()} o en el futuro",
+        lambda d: _fuera_de_rango(d["tpep_pickup_datetime"]),
     ),
     Regla(
         "cronologia_invalida", RECHAZO,

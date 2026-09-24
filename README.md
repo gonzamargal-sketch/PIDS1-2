@@ -1,7 +1,9 @@
 # PIDS Parte 2 — Infraestructura de datos
 
-Escenario **E8: Retención y ciclo de vida de los datos**, sobre el dataset
-NYC Yellow Taxi 2020.
+Escenario **E8: Retención y ciclo de vida de los datos**, sobre el esquema del
+dataset NYC Yellow Taxi con **datos de 2026**: del 1 de enero hasta hoy,
+generados a partir de mil viajes reales del portal (ver
+[Datos de trabajo](#datos-de-trabajo-2026)).
 
 Toda la documentación está en [`docs/`](docs/): el diseño en
 [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md), el reparto por bloques en
@@ -181,8 +183,9 @@ infiera el formato americano, confundirá día y mes **sin dar ningún error**.
 
 Salen de perfilar el dataset real, no de imaginarlo. Hay dos severidades:
 
-**Rechazo** (va a `trips_cuarentena`): fecha fuera de 2019-12 a 2021-02 — el
-dataset tiene viajes de 2002 —, cronología invertida, importes por encima de
+**Rechazo** (va a `trips_cuarentena`): recogida anterior a 2025-12 **o en el
+futuro** (el límite es «ahora», así que avanza solo con los días; el dataset
+real de 2020 traía viajes de 2002), cronología invertida, importes por encima de
 10.000 — hay uno de 998.310 $ —, distancias o duraciones imposibles, zonas
 fuera de rango.
 
@@ -263,22 +266,38 @@ SELECT * FROM v_calidad;                -- qué se rechaza y por qué
 La tabla vive en `lakehouse.trips`, sobre MinIO, con **catálogo SQL en el
 propio PostgreSQL** (un contenedor menos que un Hive Metastore).
 
+### Datos de trabajo (2026)
+
+Los datos con los que se prueba y se mide son **de 2026, del 1 de enero hasta
+ahora**, nunca del futuro. Salen de tres sitios:
+
+| Fuente | Qué da | Fechas |
+|---|---|---|
+| `datos/muestra_1000.csv` | mil viajes reales del portal: semilla y fixture de las pruebas | enero de 2026 (el original era enero de 2020, movido 6 años) |
+| `scripts/generar_datos_sinteticos.py` | el histórico en volumen, para las métricas | de 2026-01-01 hasta ahora; relanzarlo mañana da un día más |
+| `simulador/` (P2) | el flujo en vivo por Kafka | viajes que acaban de terminar |
+
+El generador parte de la muestra y hace cada fila distinta (distancia, duración,
+importes, zonas, pasajeros), conserva las anomalías reales (importes negativos,
+distancia cero, pasajeros a cero) y reparte las horas del día con el perfil
+típico de los taxis de Nueva York. Trabaja en UTC, como PostgreSQL.
+
 ```bash
-python ingesta/subir_bronze.py      # paso 4: sube el CSV crudo a MinIO
-python ingesta/carga_inicial.py     # paso 5: bronze → contrato → Iceberg
+# 1. Generar el histórico: 1M de filas (~25 s; va a datos/sinteticos/, fuera de git)
+python scripts/generar_datos_sinteticos.py 1000000 --seed 42
+
+# 2. Subirlo a bronze y cargarlo: cada fila va al tier que le toca por edad (~1 min)
+python ingesta/subir_bronze.py --origen datos/sinteticos
+python ingesta/carga_inicial.py --recrear
 ```
 
-Para probar sin bajarse nada, con las mil filas de muestra:
-
-```bash
-python ingesta/carga_inicial.py --local datos/muestra_1000.csv --recrear
-```
-
-**La carga inicial va directa al frío y no pasa por PostgreSQL.** Los datos son
-de 2020 y estamos en 2026: por `event_time` son históricos por definición, así
-que no tiene sentido meterlos en el caliente para archivarlos acto seguido. Eso
-nos da un tier frío poblado desde el minuto uno, y el movimiento
-caliente→frío lo aporta el simulador, que re-estampa los tiempos a «ahora».
+**La carga inicial reparte por edad**, con la misma regla que
+`particiones_a_archivar()`: lo anterior al día de corte de la política
+(hoy menos 30 días) va a Iceberg y lo demás a PostgreSQL, sin solape. El
+sistema arranca como si llevara funcionando desde enero, y el caliente ya
+tiene días anteriores a hoy que el archivado puede mover en cuanto se baja la
+política. `--recrear` borra la tabla Iceberg y la carga anterior del caliente
+(`origen = 'carga_inicial'`) antes de volver a cargar.
 
 ### Decisiones y por qué
 
@@ -349,7 +368,8 @@ Lo que se ha comprobado con las tres partes juntas:
 - `prueba_humo.py` y `prueba_archivado.py` terminan en `TODO CORRECTO`.
 - **P2 → caliente:** el simulador directo a PostgreSQL mete 20.000 eventos
   (≈98,9% al caliente y el resto a cuarentena), con `event_time` = ahora, viajes
-  repartidos por 2020 y miles de importes distintos gracias al jitter.
+  que acaban de terminar (ninguno en el futuro) y miles de importes distintos
+  gracias al jitter.
 - **P2 por Kafka:** 10.000 mensajes emitidos = 10.000 recibidos por el
   consumidor (caliente + cuarentena), sin duplicados.
 - **P4 → P1:** los cuatro DAGs cargan sin errores y corren en verde. Con la
@@ -401,9 +421,9 @@ Al acabar, volved a dejar la política en `30` / `days`.
 > **Aviso para el vídeo.** Las particiones del caliente son diarias y
 > `particiones_a_archivar()` solo devuelve días **anteriores** al corte. Aunque
 > se baje la política a 5 minutos, lo que el simulador escribe hoy no se
-> archiva hasta mañana. Para grabar la migración hace falta tener datos de días
-> anteriores: dejar el simulador corriendo desde el día antes o sembrarlos (lo
-> que hace `prueba_humo.py`).
+> archiva hasta mañana. No es un problema si antes se hace la carga inicial con
+> los datos de 2026: deja en el caliente los últimos 30 días, y al bajar la
+> política todos esos días anteriores a hoy se mudan al frío en directo.
 
 > **El jitter del simulador (paso 6) no es un adorno.** Si amplifica repitiendo
 > las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,

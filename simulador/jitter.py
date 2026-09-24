@@ -7,9 +7,9 @@ EL JITTER NO ES UN ADORNO
     el ratio del frío sale ~35x en vez de ~7,5x. Nadie se lo creería,
     con razón. Aquí cada viaje sale distinto de su semilla:
 
-      fecha de negocio  se mueve a un día cualquiera de 2020, con la hora
-                        algo desplazada: los viajes quedan repartidos por
-                        el año y no amontonados en enero
+      fecha de negocio  el viaje ocurre AHORA: termina en el último minuto
+                        y empieza lo que dure antes. Nunca queda en el
+                        futuro, que la validación lo rechazaría
       distancia         factor lognormal (~±15%); la duración se escala
                         con el mismo factor para que la velocidad siga
                         siendo creíble
@@ -40,8 +40,9 @@ import pandas as pd
 
 from common import esquema
 
-INICIO_2020 = pd.Timestamp("2020-01-01")
-DIAS_2020 = 366            # bisiesto
+# Los viajes del flujo en vivo terminan en este último intervalo, para que
+# no acaben todos en el mismo segundo
+VENTANA_FIN_S = 60
 
 SIGMA_DISTANCIA = 0.15
 SIGMA_IMPORTE = 0.12
@@ -57,21 +58,20 @@ def perturbar(df: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
     df = df.copy()
     n = len(df)
 
-    # ── Fechas de negocio: a cualquier día de 2020, conservando la hora ──
-    pickup = df["tpep_pickup_datetime"]
-    duracion = df["tpep_dropoff_datetime"] - pickup
-    hora_del_dia = pickup - pickup.dt.normalize()
-    dia = pd.to_timedelta(rng.integers(0, DIAS_2020, n), unit="D")
-    desplazamiento = pd.to_timedelta(rng.integers(-1800, 1801, n), unit="s")
-    nuevo_pickup = INICIO_2020 + dia + hora_del_dia + desplazamiento
-    # Que el desplazamiento no saque el viaje de 2020
-    nuevo_pickup = nuevo_pickup.clip(INICIO_2020, pd.Timestamp("2020-12-31 23:59:59"))
+    # ── Fechas de negocio: el viaje acaba de terminar ───────────────────
+    # UTC sin zona, como el resto del contrato de datos
+    duracion = df["tpep_dropoff_datetime"] - df["tpep_pickup_datetime"]
+    ahora = pd.Timestamp.now(tz="UTC").tz_localize(None)
+    fin = ahora - pd.to_timedelta(rng.integers(0, VENTANA_FIN_S, n), unit="s")
+    fin = pd.Series(fin, index=df.index)
 
     # ── Distancia y duración con el mismo factor ────────────────────────
     f_dist = np.exp(rng.normal(0, SIGMA_DISTANCIA, n))
     df["trip_distance"] = (df["trip_distance"] * f_dist).round(2)
-    df["tpep_pickup_datetime"] = nuevo_pickup.dt.floor("s")
-    df["tpep_dropoff_datetime"] = (nuevo_pickup + duracion * f_dist).dt.floor("s")
+    nueva_duracion = duracion * f_dist
+    # Sin bajada en la semilla: se conserva sin bajada, recogida = fin
+    df["tpep_pickup_datetime"] = (fin - nueva_duracion.fillna(pd.Timedelta(0))).dt.floor("s")
+    df["tpep_dropoff_datetime"] = fin.where(duracion.notna()).dt.floor("s")
 
     # ── Importes: tarifa y propina varían, el total absorbe la diferencia ─
     f_tarifa = np.exp(rng.normal(0, SIGMA_IMPORTE, n))

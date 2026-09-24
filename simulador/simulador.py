@@ -1,7 +1,7 @@
 """
 PIDS Parte 2 — Simulador del flujo en vivo (P2, T2.1).
 
-Reproduce 2020 a partir de la semilla de mil viajes reales, como si
+Genera viajes a partir de la semilla de mil viajes reales, como si
 estuvieran ocurriendo ahora:
 
     semilla CSV ─▶ muestreo ─▶ jitter ─▶ event_time = ahora ─▶ sumidero
@@ -10,11 +10,13 @@ estuvieran ocurriendo ahora:
 LAS DOS COLUMNAS DE TIEMPO (§3.1, lo más fácil de liar del proyecto)
     event_time            se RE-ESTAMPA a "ahora". Es el tiempo de sistema:
                           particiona el caliente y decide cuándo se archiva.
-    tpep_pickup_datetime  se QUEDA en 2020 (movido a un día cualquiera del
-                          año por el jitter). Es el tiempo de negocio.
-    Si se re-estampara la fecha de recogida, las consultas "viajes de
-    marzo" dejarían de tener sentido; si no se re-estampara event_time,
-    todo estaría caducado desde el primer segundo.
+    tpep_pickup_datetime  también es "ahora": el jitter hace que el viaje
+                          acabe en el último minuto y empiece lo que dure
+                          antes. Es el tiempo de negocio.
+    En el flujo en vivo las dos coinciden casi al segundo; siguen siendo
+    columnas distintas porque la carga inicial y los datos históricos
+    tienen su propia fecha de negocio, y el ciclo de vida solo mira
+    event_time.
 
 SUMIDEROS
     --sumidero NOMBRE carga simulador/sumidero_NOMBRE.py. Cada módulo
