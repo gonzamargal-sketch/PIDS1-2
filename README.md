@@ -297,8 +297,8 @@ columna.
 | 3 | Contrato de datos | — | ✅ |
 | 4 | Subida a bronze (MinIO) | P1 | ✅ |
 | 5 | Tabla Iceberg y carga inicial | P1 | ✅ |
-| 6 | Simulador con jitter | P2 | pendiente |
-| 7 | Consumidor de Kafka → caliente + cuarentena | P2 | pendiente |
+| 6 | Simulador con jitter | P2 | ✅ |
+| 7 | Consumidor de Kafka → caliente + cuarentena | P2 | ✅ |
 | 8 | Job de archivado con PyIceberg | P1 | pendiente |
 | 9 | DAGs de Airflow | P4 | pendiente |
 | 10 | API y router de consultas | P3 | pendiente |
@@ -307,6 +307,15 @@ columna.
 
 Cada paso pendiente está troceado en tareas con dueño, ficheros propios y
 criterio de «hecho» en [`docs/TAREAS.md`](docs/TAREAS.md).
+
+> **P2 añade `postgres/init/05_p2.sql`** (índice único que hace idempotente la
+> cuarentena frente a reentregas de Kafka). Es idempotente: sobre una base ya
+> creada basta con
+> `docker compose exec -T postgres psql -U pids -d pids < postgres/init/05_p2.sql`.
+> Sin él, el consumidor falla al escribir en cuarentena.
+>
+> Para llenar el caliente rápido, sin Kafka (~3.500 filas/s):
+> `docker compose run --rm simulador python -m simulador.simulador --sumidero postgres --eps 0 --total 1000000`
 
 > **El jitter del simulador (paso 6) no es un adorno.** Si amplifica repitiendo
 > las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,
