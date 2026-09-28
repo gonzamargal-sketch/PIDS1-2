@@ -5,9 +5,9 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-09-28 · P3 (API y router de tiers) integrada
-> en `main`: ya están los cuatro bloques. Arreglada la frontera del router
-> (ahora sigue a los datos, no al umbral).
+> **Última actualización:** 2026-09-28 · Los cuatro bloques en `main`. Nueva
+> lista de comprobación completa en el [paso 5](#5-comprobar-que-todo-funciona):
+> qué ejecutar, qué tocar y qué tiene que salir en cada bloque.
 
 ---
 
@@ -115,28 +115,132 @@ Para parar solo el simulador: `docker compose stop simulador`.
 
 ## 5. Comprobar que todo funciona
 
-| Dónde | Qué mirar |
-|---|---|
-| **Airflow** · http://localhost:8080 | Los 4 DAGs en verde: `mantener_particiones` (diario), `archivar` (cada 5 min), `estadisticas_frio`, `purga_final` (diario) |
-| **Grafana** · http://localhost:3000 (`admin` / `admin`) | Dashboard «E8 · Ciclo de vida de los datos» |
-| **MinIO** · http://localhost:9001 (`minioadmin` / `minioadmin_dev_2026`) | Bucket `bronze` con los CSV y `lakehouse` con los Parquet de Iceberg |
-| **API** · http://localhost:8000/docs | Swagger con todos los endpoints; se pueden probar desde ahí (ver [la API](#la-api-p3)) |
+Lista completa, bloque a bloque: **qué se ejecuta, qué se toca y qué tiene que
+salir**. Hacedla entera después de los pasos 1-4. Si algo no sale como dice la
+columna «Tiene que salir», ese bloque no está bien.
 
-Consultas útiles:
+Para no repetir el comando largo de psql en cada línea (hay que definirlo en
+cada terminal nueva, junto con `source .venv/bin/activate`):
 
 ```bash
-# Cuánto ocupa una fila en cada tier (la métrica estrella de E8)
-docker compose exec postgres psql -U pids -d pids -c "SELECT * FROM v_coste_por_tier;"
-
-# Flujo en vivo: tienen que ir subiendo
-docker compose exec postgres psql -U pids -d pids -c "SELECT origen, count(*) FROM taxi_trips GROUP BY 1;"
-docker compose logs --tail 3 consumidor
-
-# Calidad: qué se rechaza y por qué
-docker compose exec postgres psql -U pids -d pids -c "SELECT * FROM v_calidad;"
+alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 ```
 
-### La API (P3)
+### Dónde está cada cosa
+
+| Dónde | Acceso | Qué es |
+|---|---|---|
+| **Airflow** · http://localhost:8080 | sin login | Los 4 DAGs de P4 |
+| **Grafana** · http://localhost:3000 | `admin` / `admin` | Dashboard «E8 · Ciclo de vida de los datos» (se refresca cada 30 s) |
+| **MinIO** · http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` | Buckets `bronze` (CSV crudos) y `lakehouse` (Parquet de Iceberg) |
+| **API** · http://localhost:8000/docs | — | Swagger: todos los endpoints, con botón *Try it out* |
+
+### 5.1 Servicios (todos)
+
+| Ejecutar / tocar | Tiene que salir |
+|---|---|
+| `docker compose ps -a` | Todo `Up (healthy)`, salvo `pids_minio_init` en `Exited (0)` (crea los buckets y termina) |
+| `curl -s localhost:8000/health` | `{"estado":"ok"}` |
+| `pg "SELECT count(*) FROM taxi_trips_default;"` | `0`. Si hay filas, llegaron datos de días sin partición: ver *Problemas frecuentes* del README |
+
+### 5.2 P1 · Almacenamiento y carga
+
+| Ejecutar / tocar | Tiene que salir |
+|---|---|
+| `python scripts/prueba_humo.py` *(solo antes del paso 3: vacía el caliente)* | `TODO CORRECTO` |
+| `python scripts/prueba_archivado.py` *(ídem)* | `TODO CORRECTO`, con cada paso en `[OK]` |
+| `python ingesta/subir_bronze.py --listar` | Los CSV de `datos/sinteticos/` bajo `nyc-taxi/2026/` |
+| MinIO → bucket `lakehouse` | Carpetas `lakehouse/trips/data/` (Parquet por mes) y `metadata/` |
+| `curl -s localhost:8000/stats` | `hot.filas` ≈ los últimos 30 días y `cold.filas` con el resto; `cold.bytes_por_fila` en torno a 55 |
+| `pg "SELECT min(event_time), max(event_time) FROM taxi_trips;"` | El mínimo, de hace ~30 días; el máximo, de hoy. **Nunca en el futuro** |
+| `pg "SELECT count(*) FROM taxi_trips WHERE event_time > NOW();"` | `0` |
+| `pg "SELECT * FROM v_coste_por_tier;"` | PostgreSQL ocupa **varias veces más** por fila que Iceberg (~320-550 B frente a ~55 B) |
+| `pg "SELECT * FROM v_cumplimiento_politica;"` | `estado = OK`: nada en el caliente más viejo que el umbral |
+
+### 5.3 P2 · Ingesta en vivo (perfil `stream`, paso 4)
+
+| Ejecutar / tocar | Tiene que salir |
+|---|---|
+| `docker compose logs --tail 3 simulador` | `N emitidos (200 ev/s de media)`, con N subiendo. Al arrancar sale `Emitiendo a 'kafka' · 200.0 ev/s · … · jitter=True` |
+| `docker compose logs --tail 3 consumidor` | `N recibidos → X en caliente, Y en cuarentena, 0 duplicados`, con N subiendo |
+| `pg "SELECT origen, count(*) FROM taxi_trips GROUP BY 1;"` (dos veces, con unos segundos entre medias) | `stream` sube ~200 por segundo; `carga_inicial` no cambia |
+| `pg "SELECT max(event_time), NOW() FROM taxi_trips WHERE origen='stream';"` | El último evento, de hace unos segundos |
+| `pg "SELECT * FROM v_calidad;"` | Motivos de rechazo (`fecha_fuera_de_rango`, `tipo_invalido`…) con registros: la suciedad del simulador acaba en cuarentena, no en el caliente |
+| `docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group pids-consumidor` | Columna `LAG` cerca de 0: el consumidor va al día |
+
+**Prueba de resiliencia (no se pierde ni se duplica nada):**
+
+```bash
+docker compose stop consumidor        # el simulador sigue emitiendo a Kafka
+# esperad ~30 s: el LAG del comando de arriba crece
+docker compose start consumidor       # se pone al día
+docker compose logs --tail 3 consumidor
+```
+
+Tiene que salir: el `LAG` vuelve a ~0 y el consumidor sigue con `0 duplicados`.
+Kafka guardó los mensajes mientras estaba parado.
+
+Para parar solo el simulador: `docker compose stop simulador`. El contador de
+`stream` deja de subir.
+
+### 5.4 P4 · Orquestación (Airflow)
+
+| Ejecutar / tocar | Tiene que salir |
+|---|---|
+| Airflow → *Dags* | Los 4 activos (no en pausa) y sin errores de importación |
+| `docker compose exec airflow airflow dags list-import-errors` | `No data found` |
+| DAG `archivar` → *Runs* | Una ejecución cada 5 min, en verde. Al terminar dispara `estadisticas_frio` |
+| DAG `estadisticas_frio` | En verde, cada 5 min |
+| DAG `mantener_particiones` → ▶ *Trigger* | En verde. Luego `pg "SELECT particion FROM v_particiones ORDER BY dia DESC LIMIT 3;"` muestra particiones hasta 7 días por delante |
+| DAG `purga_final` | En verde (diario). Con la política de 7 años no borra nada |
+| `pg "SELECT medido_en, filas FROM hot_stats ORDER BY id DESC LIMIT 1;"` | `medido_en` de hace menos de 5 min: las estadísticas se están refrescando |
+
+### 5.5 P4 · Grafana
+
+Dashboard «E8 · Ciclo de vida de los datos». Qué tiene que verse en cada fila:
+
+| Fila del dashboard | Tiene que salir |
+|---|---|
+| **0 · La política** | Umbral de 30 días, custodia en frío de 7 años, registro más antiguo en caliente ≤ 30 días, cumplimiento **OK**, 0 particiones pendientes |
+| **1 · Migración** | «Filas por tier en el tiempo» con las dos áreas (caliente subiendo si hay flujo en vivo). «Máquina de estados» con las particiones en `DESALOJADO` |
+| **2 · Coste** | «Bytes por fila»: la barra de PostgreSQL varias veces más alta. Ratio de compresión > 1. «Frío por partición mensual» con un mes por barra desde enero |
+| **3 · Latencia** | Datos en cuanto se hayan hecho consultas a la API (5.6). p95 caliente < 500 ms y p95 frío < 10 s, en verde |
+| **4 · Calidad** | Registros en cuarentena > 0 y los motivos de rechazo |
+
+Si la fila 3 está vacía, haced unas cuantas llamadas a `/trips` (5.6) y
+esperad al siguiente refresco.
+
+### 5.6 P3 · API
+
+| Ejecutar / tocar | Tiene que salir |
+|---|---|
+| `curl -s localhost:8000/stats` | `data.hot` y `data.cold`, con `meta.data_source = mixto` |
+| `curl -s localhost:8000/lifecycle/policy` | Dos políticas: `ARCHIVE` a 30 días y `DELETE` a 7 años |
+| `curl -s localhost:8000/lifecycle/status` | `resumen_por_estado`, `candidatas_a_archivar` vacía y `cumplimiento.estado = OK` |
+| `curl -s localhost:8000/metrics/coste` (y `latencia`, `calidad`, `caliente`) | Lo mismo que las vistas `v_*` de PostgreSQL |
+| `curl -s localhost:8000/metrics/noexiste` | Error `404` con la lista de métricas disponibles |
+| `/trips` solo caliente, solo frío y cruzando la frontera (ver abajo) | `data_source` `hot`, `cold` y `mixto`; en el mixto, `coverage` con un tramo `cold` y otro `hot` que se tocan a las 00:00 del primer día del caliente |
+| `curl -s "localhost:8000/trips?desde=2026-09-22&hasta=2026-09-20"` | `400`: `desde` tiene que ser anterior a `hasta` |
+| `curl -s -X PUT localhost:8000/lifecycle/policy -H 'content-type: application/json' -d '{"umbral_valor":0,"umbral_unidad":"weeks"}'` | `422`: la política se valida antes de tocar la base |
+| `pg "SELECT endpoint, data_source, count(*) FROM query_log GROUP BY 1,2;"` | Una fila por cada llamada hecha, con su tier |
+
+**Prueba de que el router no pierde nada.** Una consulta que cruza la
+frontera tiene que devolver exactamente las filas del caliente más las del frío
+en ese rango (poned un rango que cruce la frontera y que no pase de 100.000
+filas):
+
+```bash
+curl -s "localhost:8000/trips?desde=2026-08-10&hasta=2026-09-29&limite=100000" \
+  | python -c "import json,sys; m=json.load(sys.stdin)['meta']; print(m['data_source'], m['rows'])"
+pg "SELECT count(*) FROM taxi_trips WHERE event_time >= '2026-08-10' AND event_time < '2026-09-29';"
+python -c "from datetime import datetime as D, timezone as Z; from common.lakehouse import obtener_tabla, contar_particion; print(contar_particion(obtener_tabla(crear=False), D(2026,8,10,tzinfo=Z.utc), D(2026,9,29,tzinfo=Z.utc)))"
+```
+
+Tiene que salir: las filas de la API = caliente + frío. Con el flujo en vivo
+encendido, parad antes el simulador, que si no el caliente cambia entre una
+consulta y otra.
+
+### 5.7 Referencia rápida de la API (P3)
 
 Toda respuesta que toca datos lleva `data` + `meta` (`data_source`,
 `coverage`, `as_of`, `latency_ms`, `rows`), y cada llamada deja una fila en
@@ -202,6 +306,28 @@ curl -s -X PUT localhost:8000/lifecycle/policy \
   últimos 30 días en el caliente: son los que se ven migrar.
 - En Grafana se ve bajar el caliente y subir el frío. Estado de cada partición:
   `SELECT * FROM archival_jobs ORDER BY particion;`
+
+> ⚠️ **La demo no se deshace.** Volver a poner 30 días no devuelve los datos
+> al caliente: se quedan en Iceberg. Para repetirla desde cero, volved a hacer
+> el paso 3 (`carga_inicial.py --recrear`). Si vais a grabar el vídeo, haced
+> antes toda la lista del paso 5.
+
+**Qué tiene que verse en cada momento:**
+
+| Momento | Dónde | Tiene que salir |
+|---|---|---|
+| Antes | `curl -s "localhost:8000/trips?desde=<hace 32 días>&hasta=<hace 28 días>"` | `mixto`, con la frontera hace ~30 días |
+| Tras el `PUT` a 5 min | La respuesta del `PUT` | `umbral_valor: 5`, `umbral_unidad: minutes` y `particiones_candidatas_ahora` > 0 (todos los días anteriores a hoy) |
+| | Grafana, fila 0 | Umbral de 5 min, cumplimiento en **INCUMPLE** y particiones pendientes > 0 |
+| | `/trips` otra vez | Igual que antes: aún no se ha movido nada, así que el caliente se sigue leyendo de PostgreSQL |
+| Durante el DAG `archivar` | `curl -s localhost:8000/lifecycle/status` o Grafana «Máquina de estados» | Las particiones pasan por `ESCRIBIENDO → ESCRITO → VERIFICADO → DESALOJADO`, de la más antigua a la más reciente |
+| Después | Consulta del paso 2 | Todo en `DESALOJADO` y `origen = escritas` (no se ha perdido ninguna fila) |
+| | Grafana, fila 0 | Cumplimiento de vuelta en **OK** (en el caliente solo queda lo de hoy) y 0 pendientes |
+| | Grafana, fila 1 | El área del caliente baja y la del frío sube en la misma cantidad |
+| | `curl -s localhost:8000/stats` | `hot.filas` = solo lo de hoy; `cold.filas` ha subido lo que ha bajado el caliente |
+| | `/trips` del rango anterior | Ahora `cold`; y un rango de ayer a mañana sale `mixto`, con la frontera a las 00:00 de hoy |
+| | Grafana, fila 3 | Las consultas al frío con más latencia que las del caliente, las dos dentro del SLA |
+| Al volver a 30 días | La respuesta del `PUT` | `particiones_candidatas_ahora: 0`, y el cumplimiento vuelve a **OK** |
 
 ### Purga del frío (cierre del ciclo de vida)
 
