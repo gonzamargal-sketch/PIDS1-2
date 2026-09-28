@@ -17,9 +17,10 @@ poder trabajar los cuatro a la vez, en [`docs/TAREAS.md`](docs/TAREAS.md).
 Antes de tocar código, leed al menos las secciones 3.1, 3.2 y 3.3 de la
 arquitectura: condicionan lo que escribe cada uno.
 
-> **Estado actual:** P1 (almacenamiento y ciclo de vida), P2 (ingesta) y P4
-> (orquestación y Grafana) están **integradas en `main` y probadas juntas**.
-> **Falta P3** (la API y el router de consultas). Detalle en
+> **Estado actual:** los cuatro bloques (P1 almacenamiento y ciclo de vida,
+> P2 ingesta, P3 API y router, P4 orquestación y Grafana) están **integrados
+> en `main` y probados juntos**. Queda un fallo conocido en la frontera del
+> router de P3 (ver [`docs/GUIA.md`](docs/GUIA.md#pendiente)). Detalle en
 > [Estado de la integración](#estado-de-la-integración).
 
 ---
@@ -143,7 +144,7 @@ pids-parte2/
 ├── archivado/   (P1)  ✅ job hot→cold (máquina de estados) y purga del frío
 ├── airflow/     (P4)  ✅ 4 DAGs: particiones, archivar, estadísticas, purga
 ├── grafana/     (P4)  ✅ datasource PostgreSQL y dashboard «E8 · Ciclo de vida»
-└── api/         (P3)  ⏳ PENDIENTE: de momento solo responde /health
+└── api/         (P3)  /trips (router de tiers), /stats, /metrics, /lifecycle
 ```
 
 > **Las tareas que faltan, con su dueño y sus ficheros**, están en
@@ -352,7 +353,7 @@ columna.
 | 7 | Consumidor de Kafka → caliente + cuarentena | P2 | ✅ |
 | 8 | Job de archivado con PyIceberg | P1 | ✅ |
 | 9 | DAGs de Airflow | P4 | ✅ |
-| 10 | API y router de consultas | P3 | pendiente |
+| 10 | API y router de consultas | P3 | ✅ (fallo conocido en la frontera) |
 | 11 | Dashboards de Grafana | P4 | ✅ |
 | 12 | Mediciones, memoria y vídeo | todos | pendiente |
 
@@ -365,10 +366,10 @@ criterio de «hecho» en [`docs/TAREAS.md`](docs/TAREAS.md).
 |---|---|---|---|
 | **P1** · Almacenamiento y ciclo de vida | `p1/almacenamiento` | ✅ | ✅ |
 | **P2** · Ingesta | `p2/ingesta` | ✅ | ✅ |
-| **P3** · Acceso (API y router) | — | ❌ **falta** | — |
+| **P3** · Acceso (API y router) | `p3/api` | ✅ | ✅ |
 | **P4** · Orquestación y observabilidad | `p4/orquestacion` | ✅ | ✅ |
 
-Lo que se ha comprobado con las tres partes juntas:
+Lo que se ha comprobado con las partes juntas:
 
 - `prueba_humo.py` y `prueba_archivado.py` terminan en `TODO CORRECTO`.
 - **P2 → caliente:** el simulador directo a PostgreSQL mete 20.000 eventos
@@ -385,12 +386,17 @@ Lo que se ha comprobado con las tres partes juntas:
 - **Grafana:** el datasource conecta y las 17 consultas del dashboard responden
   sin error.
 
-**Lo que falta de P3** (ver T3.1-T3.3 en [`docs/TAREAS.md`](docs/TAREAS.md)):
-`/trips` con el router de tiers (`data_source` y `coverage`), `/metrics/{nombre}`,
-`/stats`, `/lifecycle/status`, `/lifecycle/policy` (GET y PUT) y la escritura en
-`query_log`. Hasta que esté, **la gráfica de latencias de Grafana sale vacía** y
-la política se cambia con un `UPDATE` en vez de con el `PUT`. Todo lo que
-necesita ya existe: las tablas, las vistas y los dos tiers con datos.
+- **P3 → todo:** con los datos de 2026, `/trips` devuelve `data_source` `hot`,
+  `cold` o `mixto` según el rango, con su `coverage`, ordenado por
+  `event_time` y la misma forma de fila en los dos tiers. `/stats`,
+  `/metrics/*`, `/lifecycle/status` y `GET/PUT /lifecycle/policy` responden
+  bien (con 400/404/422 cuando toca), y cada llamada queda en `query_log`, así
+  que la gráfica de latencias por tier de Grafana ya tiene datos.
+
+**Fallo conocido de P3:** el router corta en el instante `NOW() - umbral`,
+pero el archivado mueve días completos, así que las filas del día de la
+frontera anteriores a esa hora no salen en `/trips`. Detalle y arreglo
+propuesto en [`docs/GUIA.md`](docs/GUIA.md#pendiente).
 
 ### Poner al día una base que ya teníais creada
 

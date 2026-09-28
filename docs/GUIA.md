@@ -5,8 +5,9 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-09-24 · P1, P2 y P4 integradas en `main` y
-> probadas juntas en una instalación limpia. **Falta P3** (API y router).
+> **Última actualización:** 2026-09-28 · P3 (API y router de tiers) integrada
+> en `main`: ya están los cuatro bloques. Queda un fallo conocido en la
+> frontera del router (ver [Pendiente](#pendiente)).
 
 ---
 
@@ -16,7 +17,7 @@ algo.
 |---|---|---|
 | **P1** · Almacenamiento y ciclo de vida | Job de archivado caliente→frío, purga del frío, carga inicial | ✅ en `main` |
 | **P2** · Ingesta | Simulador con jitter, Kafka, consumidor → caliente + cuarentena | ✅ en `main` |
-| **P3** · Acceso | API: `/trips` con router de tiers, métricas, `/lifecycle/*` | ❌ **pendiente** |
+| **P3** · Acceso | API: `/trips` con router de tiers, métricas, `/lifecycle/*` | ✅ en `main` (con un fallo conocido en la frontera) |
 | **P4** · Orquestación y observabilidad | 4 DAGs de Airflow, dashboard de Grafana | ✅ en `main` |
 
 **Datos de trabajo:** de 2026, del 1 de enero hasta *ahora*, nunca en el
@@ -119,7 +120,7 @@ Para parar solo el simulador: `docker compose stop simulador`.
 | **Airflow** · http://localhost:8080 | Los 4 DAGs en verde: `mantener_particiones` (diario), `archivar` (cada 5 min), `estadisticas_frio`, `purga_final` (diario) |
 | **Grafana** · http://localhost:3000 (`admin` / `admin`) | Dashboard «E8 · Ciclo de vida de los datos» |
 | **MinIO** · http://localhost:9001 (`minioadmin` / `minioadmin_dev_2026`) | Bucket `bronze` con los CSV y `lakehouse` con los Parquet de Iceberg |
-| **API** · http://localhost:8000/docs | De momento solo `/health` (falta P3) |
+| **API** · http://localhost:8000/docs | Swagger con todos los endpoints; se pueden probar desde ahí (ver [la API](#la-api-p3)) |
 
 Consultas útiles:
 
@@ -135,6 +136,28 @@ docker compose logs --tail 3 consumidor
 docker compose exec postgres psql -U pids -d pids -c "SELECT * FROM v_calidad;"
 ```
 
+### La API (P3)
+
+Toda respuesta que toca datos lleva `data` + `meta` (`data_source`,
+`coverage`, `as_of`, `latency_ms`, `rows`), y cada llamada deja una fila en
+`query_log`, que es de donde salen las latencias por tier de Grafana.
+
+```bash
+curl -s localhost:8000/stats                  # filas en caliente + estadísticas del frío
+curl -s localhost:8000/lifecycle/policy       # la política vigente
+curl -s localhost:8000/lifecycle/status       # archival_jobs, candidatas y cumplimiento
+curl -s localhost:8000/metrics/coste          # también: latencia, calidad, caliente
+
+# El router de tiers: /trips filtra por event_time en [desde, hasta)
+# (sustituid las fechas: el caliente son los últimos 30 días)
+curl -s "localhost:8000/trips?desde=2026-09-20&hasta=2026-09-22"   # solo caliente → data_source=hot
+curl -s "localhost:8000/trips?desde=2026-08-01&hasta=2026-08-03"   # solo frío     → data_source=cold
+curl -s "localhost:8000/trips?desde=2026-08-28&hasta=2026-08-31"   # cruza frontera → mixto, coverage con 2 tramos
+```
+
+`limite` (por defecto 1000, máximo 100.000) es global a la consulta. Sin zona
+horaria, las fechas se interpretan en UTC.
+
 Referencia de la prueba en instalación limpia (3M de filas; con 1M, todo en
 proporción): Kafka 35.800 emitidos = 35.800 recibidos; una fila ocupa
 **~320 B en PostgreSQL y ~54 B en Iceberg** (unas 6 veces menos).
@@ -144,18 +167,21 @@ proporción): Kafka 35.800 emitidos = 35.800 recibidos; una fila ocupa
 ## 6. La demo: ver la migración caliente → frío
 
 ```bash
-# 1. Bajar la política. Es un UPDATE: sin redesplegar nada
-docker compose exec postgres psql -U pids -d pids -c \
-  "UPDATE retention_policy SET umbral_valor=5, umbral_unidad='minutes' WHERE accion='ARCHIVE';"
+# 1. Bajar la política desde la API, sin redesplegar nada. La respuesta dice
+#    cuántas particiones pasan a ser candidatas en ese mismo momento
+curl -s -X PUT localhost:8000/lifecycle/policy \
+  -H 'content-type: application/json' -d '{"umbral_valor":5,"umbral_unidad":"minutes"}'
 
 # 2. En la siguiente pasada de "archivar" (cada 5 min) los días anteriores a
 #    hoy pasan al frío. Seguirlo: todo en DESALOJADO y origen = escritas
 docker compose exec postgres psql -U pids -d pids -c \
   "SELECT estado, count(*), sum(filas_origen) origen, sum(filas_escritas) escritas FROM archival_jobs GROUP BY 1;"
 
+#    (o por la API: curl -s localhost:8000/lifecycle/status)
+
 # 3. Al acabar, volver a la política real
-docker compose exec postgres psql -U pids -d pids -c \
-  "UPDATE retention_policy SET umbral_valor=30, umbral_unidad='days' WHERE accion='ARCHIVE';"
+curl -s -X PUT localhost:8000/lifecycle/policy \
+  -H 'content-type: application/json' -d '{"umbral_valor":30,"umbral_unidad":"days"}'
 ```
 
 - Para no esperar a la siguiente pasada, se puede lanzar a mano desde Airflow
@@ -207,15 +233,17 @@ Y para tener los datos de 2026, los pasos 3 y 4.
 Lo que falta para tener todo E8, en el orden en que se irá añadiendo a esta
 guía:
 
-- [ ] **P3 · API** (`p3/api`): `/trips` con el router de tiers (`data_source` y
-  `coverage`), `/metrics/{nombre}`, `/stats`, `/lifecycle/status`,
-  `/lifecycle/policy` (GET y **PUT**) y la escritura en `query_log`. Cuando
-  esté:
-  - el paso 6 de la demo se hará con el `PUT /lifecycle/policy` en vez del
-    `UPDATE`;
-  - la gráfica de latencias por tier de Grafana tendrá datos reales;
-  - habrá que añadir aquí las consultas de ejemplo (solo caliente, solo frío y
-    una que cruce la frontera).
+- [ ] **Fallo en la frontera del router (P3)**: `api/router_tiers.py` corta
+  en el instante exacto `NOW() - umbral`, pero el archivado mueve **días
+  completos** (`particiones_a_archivar()` usa `(NOW() - umbral)::DATE`). Las
+  filas entre las 00:00 de ese día y la frontera siguen en PostgreSQL, pero el
+  router las pide a Iceberg y **no salen en `/trips`**. En la demo es peor:
+  tras el `PUT` a 5 minutos, casi todo el caliente (incluido hoy, que nunca
+  se archiva hasta mañana) se pide al frío y `/trips` sale vacío. Arreglo
+  propuesto: que la frontera sea el inicio del día más antiguo que sigue en el
+  caliente (donde están los datos de verdad), no el umbral de la política.
+- [ ] **Consultas de ejemplo del vídeo** con las fechas definitivas (solo
+  caliente, solo frío y una que cruce la frontera).
 - [ ] **Mediciones (T5.1)**: las seis métricas de §7 con capturas, en
   `docs/MEDICIONES.md`.
 - [ ] **Memoria (T5.2)** y **vídeo (T5.3)**.
