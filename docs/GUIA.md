@@ -5,9 +5,10 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-09-28 · Los cuatro bloques en `main`. Nueva
-> lista de comprobación completa en el [paso 5](#5-comprobar-que-todo-funciona):
-> qué ejecutar, qué tocar y qué tiene que salir en cada bloque.
+> **Última actualización:** 2026-09-28 · Los cuatro bloques en `main`. El
+> [paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
+> funciona; el [paso 7](#7-qué-podéis-hacer-vosotros-tocar-el-sistema), para
+> **tocarlo**: meter viajes, cambiar la política, mover datos y provocar fallos.
 
 ---
 
@@ -337,6 +338,219 @@ Para ver qué haría, sin borrar:
 ```bash
 docker compose exec airflow /opt/pids-venv/bin/python -m archivado.purga --simulacro
 ```
+
+---
+
+## 7. Qué podéis hacer vosotros (tocar el sistema)
+
+El paso 5 es para **mirar**; esto es para **actuar**: meter viajes, cambiar la
+política, mover datos a mano y ver cómo reacciona todo. Cada apartado dice
+qué hacer y dónde se ve el efecto. Si no dice lo contrario, se puede repetir y
+no rompe nada.
+
+### 7.1 Añadir un viaje a mano
+
+```bash
+python scripts/anadir_viaje.py                                    # un viaje normal
+python scripts/anadir_viaje.py --distancia 12 --minutos 35 --importe 48.5 --propina 9
+```
+
+Opciones: `--distancia` (millas), `--minutos` (duración), `--importe` y
+`--propina` (en $), `--pasajeros`, `--pago` (1 tarjeta, 2 efectivo),
+`--zona-origen` y `--zona-destino` (1-265). El viaje "acaba de terminar"
+(`event_time` = ahora), así que siempre cae en el caliente.
+
+Pasa por el **mismo contrato de datos** que el flujo en vivo. El script dice
+dónde ha acabado y por qué:
+
+| Probad con | Resultado |
+|---|---|
+| *(nada)* | **Caliente** |
+| `--importe -20` | **Caliente con aviso** `importe_negativo` (sospechoso pero posible: una devolución) |
+| `--distancia 30 --minutos 5` | **Caliente con aviso** `velocidad_imposible` |
+| `--pasajeros 0` | **Caliente con aviso** `sin_pasajeros` |
+| `--distancia 600` | **Cuarentena**: `distancia_excesiva` |
+| `--minutos 400` | **Cuarentena**: `duracion_excesiva` |
+| `--minutos 0` | **Cuarentena**: `cronologia_invalida` (baja a la vez que sube) |
+| `--importe 20000` | **Cuarentena**: `importe_excesivo` |
+| `--zona-origen 999` | **Cuarentena**: `zona_fuera_de_rango` |
+
+Dónde se ve: el propio script imprime la consulta para verlo; en
+`curl -s "localhost:8000/trips?desde=<hace 5 min>&hasta=<dentro de 1 min>"`
+(las fechas en UTC, p. ej. `2026-09-28T12:25:00`), con `origen = manual`; y los
+rechazados, en `/metrics/calidad` y en la fila 4 de Grafana. Las reglas están
+en `common/validacion.py`.
+
+### 7.2 Mandar viajes por Kafka a mano
+
+Necesita el perfil `stream` levantado (paso 4). Con `--json` el script no
+escribe nada: saca el mensaje, y se lo pasamos a Kafka como lo haría el
+simulador:
+
+```bash
+python scripts/anadir_viaje.py --json --distancia 7 --importe 31 | \
+  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic trips.raw
+
+# Un mensaje que ni siquiera es JSON
+echo 'esto no es json' | docker compose exec -T kafka \
+  /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic trips.raw
+```
+
+Dónde se ve: `docker compose logs --tail 2 consumidor` cuenta uno más en
+caliente y uno más en cuarentena (tarda hasta 10 s en escribir el log). El
+segundo acaba en `trips_cuarentena` con el motivo `mensaje_ilegible` y el texto
+tal cual en `payload`.
+
+### 7.3 Meter muchos viajes de golpe
+
+```bash
+# N viajes directos a PostgreSQL, sin Kafka (no hace falta el perfil stream)
+docker compose run --rm --no-deps simulador \
+  python -m simulador.simulador --sumidero postgres --total 5000 --eps 0
+
+# Lo mismo con mucha más suciedad, para llenar la cuarentena
+docker compose run --rm --no-deps simulador \
+  python -m simulador.simulador --sumidero postgres --total 5000 --eps 0 --pct-suciedad 20
+```
+
+`--eps 0` es "tan rápido como se pueda"; `--eps 50` los emite a 50 por
+segundo. Quitando `--sumidero postgres` van por Kafka (entonces sí hace falta
+el perfil `stream`).
+
+Para cambiar el **flujo en vivo** que va siempre, editad en `.env`
+`SIMULADOR_EVENTOS_POR_SEGUNDO` (por defecto 200) o
+`SIMULADOR_PCT_SUCIEDAD_EXTRA` (por defecto 1.0) y recread el simulador:
+`docker compose up -d simulador`.
+
+### 7.4 Más datos históricos
+
+La forma segura es regenerar y **recargar todo** (paso 3), con otro tamaño o
+rango:
+
+```bash
+python scripts/generar_datos_sinteticos.py 3000000 --seed 7        # 3M en vez de 1M
+python scripts/generar_datos_sinteticos.py 500000 --desde 2026-06-01
+python ingesta/subir_bronze.py --origen datos/sinteticos
+python ingesta/carga_inicial.py --recrear
+```
+
+Borrad antes los CSV viejos de `datos/sinteticos/`, que si no se cargan
+también. **No carguéis un CSV encima sin `--recrear`** si ya habéis hecho la
+demo: podría volver a crear en el caliente particiones de días que ya están en
+el frío, y el router dejaría de ver esas filas.
+
+### 7.5 Cambiar la política de archivado (lo de los 5 minutos)
+
+Es un dato, no código: se cambia en caliente, sin reiniciar nada. Unidades:
+`minutes`, `hours`, `days` o `years`.
+
+```bash
+curl -s -X PUT localhost:8000/lifecycle/policy -H 'content-type: application/json' \
+  -d '{"umbral_valor":5,"umbral_unidad":"minutes"}'     # o 2 hours, 7 days, 30 days…
+```
+
+- La respuesta dice cuántas particiones pasan a ser candidatas **en ese
+  momento** (`particiones_candidatas_ahora`).
+- **Los datos no se mueven al hacer el PUT**, sino en la siguiente pasada del
+  DAG `archivar` (cada 5 min, o lanzándolo a mano, 7.7).
+- Se mueven **días completos**: con un umbral de minutos u horas sale
+  prácticamente lo mismo (todo lo anterior a hoy). Para ver una diferencia real entre
+  umbrales, probad `7 days` frente a `20 days`.
+- **Bajar es irreversible**: al volver a subir el umbral no vuelve nada al
+  caliente. Para empezar de cero, el paso 3.
+- También se puede tocar desde Swagger (http://localhost:8000/docs →
+  `PUT /lifecycle/policy` → *Try it out*), o con SQL directo:
+  `pg "UPDATE retention_policy SET umbral_valor=5, umbral_unidad='minutes' WHERE accion='ARCHIVE';"`
+
+Dónde se ve: `/lifecycle/status`, fila 0 de Grafana (umbral, cumplimiento y
+pendientes) y, tras el DAG, filas 1 y 2.
+
+### 7.6 Cambiar la política de borrado del frío (purga)
+
+La de borrado es otra fila de la misma tabla (`accion=DELETE`, 7 años). **Lo
+que se purga se borra de verdad**: mirad siempre antes el simulacro.
+
+No existe la unidad `months` (daría `422`): los meses se ponen en días. La
+purga borra **meses completos** del frío.
+
+```bash
+# 1. Bajarla, p. ej. a 180 días: con datos desde enero, borraría los meses más viejos
+curl -s -X PUT "localhost:8000/lifecycle/policy?accion=DELETE" \
+  -H 'content-type: application/json' -d '{"umbral_valor":180,"umbral_unidad":"days"}'
+
+# 2. Ver qué borraría, sin borrar nada
+docker compose exec airflow /opt/pids-venv/bin/python -m archivado.purga --simulacro
+
+# 3. Si de verdad se quiere ver borrar: DAG purga_final → ▶ en Airflow
+
+# 4. Volver a la real
+curl -s -X PUT "localhost:8000/lifecycle/policy?accion=DELETE" \
+  -H 'content-type: application/json' -d '{"umbral_valor":7,"umbral_unidad":"years"}'
+```
+
+Dónde se ve: fila 2 de Grafana, «Frío por partición mensual», pierde los meses
+purgados; `curl -s localhost:8000/stats` baja `cold.filas`.
+
+### 7.7 Mover datos a mano (sin esperar al DAG)
+
+```bash
+# Qué se llevaría ahora el archivado, sin mover nada
+docker compose exec airflow /opt/pids-venv/bin/python -m archivado.job_archivado --simulacro
+
+# Archivar un solo día concreto (tiene que ser candidato según la política)
+docker compose exec airflow /opt/pids-venv/bin/python -m archivado.job_archivado --dia 2026-08-30
+
+# Lanzar un DAG ya (también con el botón ▶ en Airflow)
+docker compose exec airflow airflow dags trigger archivar
+docker compose exec airflow airflow dags trigger mantener_particiones
+```
+
+**Congelar el archivado** para enseñar algo con calma:
+
+```bash
+docker compose exec airflow airflow dags pause archivar      # deja de pasar
+docker compose exec airflow airflow dags unpause archivar    # vuelve
+```
+
+Truco para el vídeo: pausar `archivar`, hacer el `PUT` a 5 minutos y enseñar
+que el cumplimiento sale **INCUMPLE** con particiones pendientes, pero `/trips`
+sigue devolviéndolo todo desde el caliente (el router sigue a los datos, no a
+la política). Después, `unpause` y ver cómo se mueven. **Acordaos del
+`unpause`.**
+
+### 7.8 Consultar datos
+
+| Qué | Cómo |
+|---|---|
+| Viajes de un rango, del tier que sea | `curl -s "localhost:8000/trips?desde=…&hasta=…&limite=…"` (fechas ISO; sin zona = UTC; `limite` 1-100.000) |
+| Lo mismo, con botones | http://localhost:8000/docs → `GET /trips` → *Try it out* |
+| Cualquier métrica | `/metrics/coste`, `/metrics/latencia`, `/metrics/calidad`, `/metrics/caliente` |
+| SQL libre sobre el caliente | `pg "SELECT …"` (alias del paso 5) |
+| Los Parquet del frío | MinIO → `lakehouse/lakehouse/trips/data/` |
+
+Cada consulta a la API queda en `query_log` y alimenta la fila 3 de Grafana:
+hacer varias al frío y al caliente es la forma de llenar la gráfica de
+latencias para el vídeo.
+
+### 7.9 Provocar fallos
+
+| Qué | Cómo | Tiene que pasar |
+|---|---|---|
+| Se cae el consumidor | `docker compose stop consumidor`, esperar, `start` | Kafka guarda los mensajes; al volver se pone al día sin perder ni duplicar (5.3) |
+| Se cae el archivado a mitad | `python scripts/prueba_archivado.py` *(vacía el caliente: solo antes del paso 3)* | Relanzado, termina sin duplicar y sin borrar nada que no esté verificado |
+| Se cae la API | `docker compose restart api` | En ~15 s vuelve `healthy`; no se pierde nada, la API no guarda estado |
+
+### 7.10 Volver al estado normal
+
+| Si habéis… | Para deshacerlo |
+|---|---|
+| Bajado la política de archivado | `PUT` a `{"umbral_valor":30,"umbral_unidad":"days"}` (los datos movidos se quedan en el frío) |
+| Bajado la de borrado | `PUT ?accion=DELETE` a `{"umbral_valor":7,"umbral_unidad":"years"}` |
+| Pausado un DAG | `airflow dags unpause <dag>` o el interruptor en Airflow |
+| Metido viajes a mano | `pg "DELETE FROM taxi_trips WHERE origen='manual';"` |
+| Movido datos y queréis empezar de cero | Paso 3 (`carga_inicial.py --recrear`) |
+| Roto algo y no sabéis qué | Pasos 1-3 enteros (`down -v` y a empezar) |
 
 ---
 

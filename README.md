@@ -134,6 +134,7 @@ pids-parte2/
 │   ├── prueba_humo.py              ·  verifica que el esqueleto está sano
 │   ├── prueba_archivado.py         ·  prueba end-to-end del ciclo de vida (P1)
 │   ├── generar_datos_sinteticos.py ·  CSV sintético con el esquema del portal
+│   ├── anadir_viaje.py             ·  mete un viaje a mano por el contrato de datos (GUIA §7)
 │   └── descargar_bronze.py         ·  descarga los 24,6M del portal (opcional)
 ├── ingesta/
 │   ├── subir_bronze.py      ·  paso 4: dataset crudo → MinIO
