@@ -24,8 +24,8 @@ router = APIRouter(tags=["trips"])
 def _con_tz(momento: datetime) -> datetime:
     """Un datetime sin zona se interpreta como UTC.
 
-    Si se dejara naive, compararlo con la frontera (que viene de
-    PostgreSQL como TIMESTAMPTZ) lanzaría TypeError.
+    Si se dejara naive, compararlo con los límites de los tramos (que
+    son 00:00 UTC de cada día, con zona) lanzaría TypeError.
     """
     return momento if momento.tzinfo else momento.replace(tzinfo=timezone.utc)
 

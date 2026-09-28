@@ -317,6 +317,20 @@ por la frontera de retención, lanza las consultas que hagan falta a cada tier, 
 Orden de decisión: Postgres si el rango cae en caliente → Iceberg si cae en frío → ambos y fusión
 si cruza la frontera.
 
+**Dónde está la frontera.** No es `NOW() - umbral`: la política dice *cuándo* se mueve un día, no
+dónde está cada fila ahora. El archivado mueve **días completos** y solo cuando pasa el DAG, así que
+cortar en el umbral perdía filas: las del día de la frontera anteriores a esa hora (siguen en
+Postgres, pero se pedían a Iceberg) y, tras bajar el umbral a 5 min en la demo, todo lo que el DAG
+aún no había movido. El router decide **día a día, leyendo Postgres en cada consulta**:
+
+- un día está en **caliente** si su partición existe y `archival_jobs` no lo marca `DESALOJADO`
+  (en `ESCRIBIENDO`, `ESCRITO` o `VERIFICADO` sus filas siguen en Postgres, y se leen de ahí);
+- está en **frío** si es anterior al día más antiguo del caliente o está `DESALOJADO`.
+
+Los días seguidos del mismo tier se juntan en un tramo del `coverage`, cortados a las 00:00 UTC. Si
+un día se queda en `ERROR` y el job sigue con los siguientes, el plan tiene varios tramos de cada
+tier y la consulta sigue saliendo completa. Código en `api/router_tiers.py`.
+
 Endpoints mínimos: `/trips`, `/metrics/{nombre}`, `/stats`, `/lifecycle/status`,
 `/lifecycle/policy` (GET y PUT, para bajar el umbral en la demo), `/health`.
 

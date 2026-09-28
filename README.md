@@ -19,8 +19,7 @@ arquitectura: condicionan lo que escribe cada uno.
 
 > **Estado actual:** los cuatro bloques (P1 almacenamiento y ciclo de vida,
 > P2 ingesta, P3 API y router, P4 orquestación y Grafana) están **integrados
-> en `main` y probados juntos**. Queda un fallo conocido en la frontera del
-> router de P3 (ver [`docs/GUIA.md`](docs/GUIA.md#pendiente)). Detalle en
+> en `main` y probados juntos**. Detalle en
 > [Estado de la integración](#estado-de-la-integración).
 
 ---
@@ -353,7 +352,7 @@ columna.
 | 7 | Consumidor de Kafka → caliente + cuarentena | P2 | ✅ |
 | 8 | Job de archivado con PyIceberg | P1 | ✅ |
 | 9 | DAGs de Airflow | P4 | ✅ |
-| 10 | API y router de consultas | P3 | ✅ (fallo conocido en la frontera) |
+| 10 | API y router de consultas | P3 | ✅ |
 | 11 | Dashboards de Grafana | P4 | ✅ |
 | 12 | Mediciones, memoria y vídeo | todos | pendiente |
 
@@ -393,10 +392,12 @@ Lo que se ha comprobado con las partes juntas:
   bien (con 400/404/422 cuando toca), y cada llamada queda en `query_log`, así
   que la gráfica de latencias por tier de Grafana ya tiene datos.
 
-**Fallo conocido de P3:** el router corta en el instante `NOW() - umbral`,
-pero el archivado mueve días completos, así que las filas del día de la
-frontera anteriores a esa hora no salen en `/trips`. Detalle y arreglo
-propuesto en [`docs/GUIA.md`](docs/GUIA.md#pendiente).
+**Frontera del router (arreglado tras la integración):** al principio el
+router cortaba en `NOW() - umbral`, pero el archivado mueve días completos y
+solo cuando pasa el DAG, así que se perdían filas. Ahora decide día a día según
+dónde están los datos (partición existente y no `DESALOJADO`); comprobado que
+`/trips` devuelve exactamente caliente + frío. Ver
+[`docs/ARQUITECTURA.md` §6](docs/ARQUITECTURA.md).
 
 ### Poner al día una base que ya teníais creada
 

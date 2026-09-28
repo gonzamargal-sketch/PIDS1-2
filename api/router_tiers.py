@@ -5,17 +5,36 @@ El componente con más chicha del proyecto. Recibe un rango de fechas, lo
 corta por la frontera de retención, decide qué tiers tocar, consulta,
 fusiona y anota de dónde viene cada dato.
 
-LA FRONTERA SALE DE retention_policy, NO DE UNA CONSTANTE
-    frontera = NOW() - umbral_intervalo('trips', 'ARCHIVE')
+LA FRONTERA SALE DE DÓNDE ESTÁN LOS DATOS, NO DEL UMBRAL
+    retention_policy decide CUÁNDO se mueve un día (lo hace el DAG
+    archivar), pero no dónde está cada fila en este momento. Cortar en
+    NOW() - umbral fallaba de dos formas:
 
-    Se lee en cada request a propósito. En el vídeo (§10, minuto 2:30) se
-    baja el umbral a 5 minutos con un PUT y el router tiene que empezar a
-    mandar a Iceberg acto seguido, sin reiniciar nada. Si la frontera
-    estuviera cacheada o en un .py, ese momento no funcionaría.
+      - el archivado mueve DÍAS COMPLETOS (particiones_a_archivar() corta
+        en (NOW() - umbral)::DATE), así que las filas del día de la
+        frontera anteriores a esa hora seguían en PostgreSQL y el router
+        las pedía a Iceberg: no salían en ninguna consulta;
+      - en el vídeo, tras bajar el umbral a 5 minutos con el PUT, el
+        router mandaba al frío días que el DAG aún no había movido (y el
+        de hoy no se mueve hasta mañana), y /trips salía vacío.
 
-    Se reutiliza la función SQL umbral_intervalo() en vez de reconstruir
-    el INTERVAL en Python: la conversión de unidades ya está resuelta ahí
-    (postgres/init/01_esquema.sql) y así no hay dos verdades.
+    Por eso se decide día a día, en cada request, leyendo el propio
+    PostgreSQL (ver dias_en_caliente()):
+
+        día en caliente  <=>  su partición existe y no está DESALOJADO
+                              en archival_jobs
+        día en frío      <=>  es anterior al día más antiguo del caliente,
+                              o archival_jobs lo marca DESALOJADO
+
+    Mientras una partición está ESCRIBIENDO, ESCRITO o VERIFICADO sus
+    filas siguen en PostgreSQL, así que se leen de ahí: es la copia que
+    seguro está completa. Y si el job deja un día en ERROR y sigue con los
+    siguientes, ese día se sigue leyendo del caliente aunque los
+    posteriores ya estén en el frío: el plan puede tener más de un tramo
+    de cada tier.
+
+    Sigue sin cachearse nada: tras el PUT del vídeo, en cuanto el DAG
+    desaloja una partición, la siguiente consulta ya la pide a Iceberg.
 
 SE CORTA POR event_time, NUNCA POR tpep_pickup_datetime
     §3.1 de ARQUITECTURA.md: event_time es el tiempo de sistema y es la
@@ -33,14 +52,13 @@ MODELO DE MUDANZA => TRAMOS DISJUNTOS
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
-from fastapi import HTTPException
 from psycopg2.extensions import connection as PGConnection
 from pyiceberg.table import Table
 
-from api.dependencias import DATASET, dict_cursor
+from api.dependencias import dict_cursor
 from api.lectura_cold import leer_cold
 from api.lectura_hot import leer_hot
 
@@ -63,7 +81,7 @@ class Tramo:
 @dataclass
 class Plan:
     """Cómo se va a resolver una consulta: qué tramos y contra qué tier."""
-    frontera: datetime
+    frontera: datetime  # 00:00 UTC del día más antiguo del caliente
     tramos: list[Tramo] = field(default_factory=list)
 
     @property
@@ -76,52 +94,84 @@ class Plan:
         return "hot"
 
 
-def frontera_retencion(conn: PGConnection) -> datetime:
-    """Instante a partir del cual una fila sigue estando en el caliente.
+def _inicio_dia(dia: date) -> datetime:
+    """00:00 UTC del día: es donde empiezan las particiones diarias.
 
-        event_time >= frontera  -> PostgreSQL (hot)
-        event_time <  frontera  -> Iceberg    (cold)
+    crear_particion_dia() usa p_dia::TIMESTAMPTZ y la base está en UTC.
+    """
+    return datetime.combine(dia, time.min, tzinfo=timezone.utc)
 
-    Devuelve un datetime con tzinfo, porque lo calcula PostgreSQL con
-    NOW() y TIMESTAMPTZ.
+
+@dataclass
+class EstadoTiers:
+    """Qué días están en el caliente en este momento."""
+    dias_hot: set[date]
+    dias_desalojados: set[date]
+    primer_dia_hot: date
+
+    def tier(self, dia: date) -> str:
+        if dia < self.primer_dia_hot or dia in self.dias_desalojados:
+            return "cold"
+        # Días sin partición posteriores al primero (p. ej. futuros): si
+        # hubiera filas, estarían en taxi_trips_default, que es caliente.
+        return "hot"
+
+
+def dias_en_caliente(conn: PGConnection) -> EstadoTiers:
+    """Lee de PostgreSQL qué días siguen en el caliente.
+
+    Las particiones se sacan de v_particiones (la misma vista que usa
+    particiones_a_archivar()) y el estado de archival_jobs, así que el
+    router y el job de archivado ven la misma verdad.
     """
     with dict_cursor(conn) as cur:
         cur.execute(
-            "SELECT NOW() - umbral_intervalo(%s, 'ARCHIVE') AS frontera",
-            (DATASET,),
+            """
+            SELECT p.dia, COALESCE(a.estado, 'PENDIENTE') AS estado
+            FROM v_particiones p
+            LEFT JOIN archival_jobs a ON a.particion = p.dia
+            WHERE p.dia IS NOT NULL
+            """
         )
-        fila = cur.fetchone()
+        particiones = cur.fetchall()
+        cur.execute(
+            "SELECT particion FROM archival_jobs WHERE estado = 'DESALOJADO'"
+        )
+        desalojados = {f["particion"] for f in cur.fetchall()}
+        cur.execute("SELECT CURRENT_DATE AS hoy")
+        hoy = cur.fetchone()["hoy"]
 
-    if fila is None or fila["frontera"] is None:
-        # umbral_intervalo devuelve NULL si no hay política ARCHIVE activa.
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                f"No hay política ARCHIVE activa para dataset='{DATASET}' en "
-                "retention_policy: el router no puede decidir la frontera."
-            ),
-        )
-    return fila["frontera"]
+    dias_hot = {f["dia"] for f in particiones if f["dia"] not in desalojados}
+    # Sin particiones en caliente, todo lo anterior a hoy está en el frío.
+    return EstadoTiers(
+        dias_hot=dias_hot,
+        dias_desalojados=desalojados,
+        primer_dia_hot=min(dias_hot) if dias_hot else hoy,
+    )
 
 
 def planificar(conn: PGConnection, desde: datetime, hasta: datetime) -> Plan:
-    """Corta [desde, hasta) por la frontera y decide qué tiers tocar.
+    """Corta [desde, hasta) en tramos según el tier de cada día.
 
     Orden de decisión de §6: PostgreSQL si el rango cae en caliente →
-    Iceberg si cae en frío → los dos y fusión si cruza la frontera.
+    Iceberg si cae en frío → los dos y fusión si cruza la frontera. Los
+    días consecutivos del mismo tier se juntan en un solo tramo.
     """
-    frontera = frontera_retencion(conn)
-    plan = Plan(frontera=frontera)
+    estado = dias_en_caliente(conn)
+    plan = Plan(frontera=_inicio_dia(estado.primer_dia_hot))
 
-    # Parte fría: [desde, min(hasta, frontera))
-    cold_desde, cold_hasta = desde, min(hasta, frontera)
-    if cold_desde < cold_hasta:
-        plan.tramos.append(Tramo(cold_desde, cold_hasta, "cold"))
-
-    # Parte caliente: [max(desde, frontera), hasta)
-    hot_desde, hot_hasta = max(desde, frontera), hasta
-    if hot_desde < hot_hasta:
-        plan.tramos.append(Tramo(hot_desde, hot_hasta, "hot"))
+    desde_utc = desde.astimezone(timezone.utc)
+    ultimo = (hasta.astimezone(timezone.utc) - timedelta(microseconds=1)).date()
+    dia = desde_utc.date()
+    while dia <= ultimo:
+        tier = estado.tier(dia)
+        inicio = max(desde, _inicio_dia(dia))
+        fin = min(hasta, _inicio_dia(dia + timedelta(days=1)))
+        if plan.tramos and plan.tramos[-1].tier == tier:
+            plan.tramos[-1].hasta = fin
+        else:
+            plan.tramos.append(Tramo(inicio, fin, tier))
+        dia += timedelta(days=1)
 
     return plan
 

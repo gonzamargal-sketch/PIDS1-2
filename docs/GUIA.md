@@ -6,8 +6,8 @@ grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
 > **Última actualización:** 2026-09-28 · P3 (API y router de tiers) integrada
-> en `main`: ya están los cuatro bloques. Queda un fallo conocido en la
-> frontera del router (ver [Pendiente](#pendiente)).
+> en `main`: ya están los cuatro bloques. Arreglada la frontera del router
+> (ahora sigue a los datos, no al umbral).
 
 ---
 
@@ -17,7 +17,7 @@ algo.
 |---|---|---|
 | **P1** · Almacenamiento y ciclo de vida | Job de archivado caliente→frío, purga del frío, carga inicial | ✅ en `main` |
 | **P2** · Ingesta | Simulador con jitter, Kafka, consumidor → caliente + cuarentena | ✅ en `main` |
-| **P3** · Acceso | API: `/trips` con router de tiers, métricas, `/lifecycle/*` | ✅ en `main` (con un fallo conocido en la frontera) |
+| **P3** · Acceso | API: `/trips` con router de tiers, métricas, `/lifecycle/*` | ✅ en `main` |
 | **P4** · Orquestación y observabilidad | 4 DAGs de Airflow, dashboard de Grafana | ✅ en `main` |
 
 **Datos de trabajo:** de 2026, del 1 de enero hasta *ahora*, nunca en el
@@ -158,6 +158,13 @@ curl -s "localhost:8000/trips?desde=2026-08-28&hasta=2026-08-31"   # cruza front
 `limite` (por defecto 1000, máximo 100.000) es global a la consulta. Sin zona
 horaria, las fechas se interpretan en UTC.
 
+**La frontera sigue a los datos, no al umbral.** El router mira en cada
+consulta qué días siguen en PostgreSQL: un día está en caliente si su
+partición existe y no está `DESALOJADO` en `archival_jobs`. Por eso los tramos
+del `coverage` empiezan y acaban a las 00:00 UTC, y la frontera es el primer
+día del caliente, no «hace 30 días a esta hora». Explicación completa en
+[ARQUITECTURA §6](ARQUITECTURA.md).
+
 Referencia de la prueba en instalación limpia (3M de filas; con 1M, todo en
 proporción): Kafka 35.800 emitidos = 35.800 recibidos; una fila ocupa
 **~320 B en PostgreSQL y ~54 B en Iceberg** (unas 6 veces menos).
@@ -184,6 +191,9 @@ curl -s -X PUT localhost:8000/lifecycle/policy \
   -H 'content-type: application/json' -d '{"umbral_valor":30,"umbral_unidad":"days"}'
 ```
 
+- Mientras tanto, `/trips` sigue saliendo completo: un día se pide al frío
+  en cuanto el DAG lo desaloja, no antes. Repetir la consulta que cruza la
+  frontera durante la demo muestra cómo avanza el `coverage` al frío.
 - Para no esperar a la siguiente pasada, se puede lanzar a mano desde Airflow
   (botón ▶ del DAG `archivar`) o con
   `docker compose exec airflow airflow dags trigger archivar`.
@@ -233,15 +243,6 @@ Y para tener los datos de 2026, los pasos 3 y 4.
 Lo que falta para tener todo E8, en el orden en que se irá añadiendo a esta
 guía:
 
-- [ ] **Fallo en la frontera del router (P3)**: `api/router_tiers.py` corta
-  en el instante exacto `NOW() - umbral`, pero el archivado mueve **días
-  completos** (`particiones_a_archivar()` usa `(NOW() - umbral)::DATE`). Las
-  filas entre las 00:00 de ese día y la frontera siguen en PostgreSQL, pero el
-  router las pide a Iceberg y **no salen en `/trips`**. En la demo es peor:
-  tras el `PUT` a 5 minutos, casi todo el caliente (incluido hoy, que nunca
-  se archiva hasta mañana) se pide al frío y `/trips` sale vacío. Arreglo
-  propuesto: que la frontera sea el inicio del día más antiguo que sigue en el
-  caliente (donde están los datos de verdad), no el umbral de la política.
 - [ ] **Consultas de ejemplo del vídeo** con las fechas definitivas (solo
   caliente, solo frío y una que cruce la frontera).
 - [ ] **Mediciones (T5.1)**: las seis métricas de §7 con capturas, en
