@@ -532,6 +532,22 @@ Python anterior. **Avisad al grupo antes de tocar los pines**: si sube uno, los
 demás tienen que rehacer su venv, y `pandas` 3.x tiene cambios de ruptura
 frente al 2.x, así que quien los suba pasa la prueba de humo antes de commitear.
 
+### La API sale `unhealthy` tras reiniciar el PC (`Could not import module "api.app"`)
+
+Docker Desktop arranca los contenedores solo, **antes** de que el disco de WSL
+esté montado, y los bind-mounts se quedan vacíos: la API sin código, Airflow
+sin DAGs y Grafana sin dashboard. Todo sale `Up`, pero nada funciona.
+
+Se comprueba con `docker compose exec api ls /app/api` (vacío = es esto) y se
+arregla recreando los contenedores, sin perder datos (están en volúmenes):
+
+```bash
+docker compose --profile core --profile orch --profile viz up -d --force-recreate
+```
+
+Mientras estuvo así, `archivar` no corrió: `v_cumplimiento_politica` puede
+salir `INCUMPLE` hasta la siguiente pasada (o lanzadla a mano desde Airflow).
+
 ### `port is already allocated`
 
 Tenéis un PostgreSQL local escuchando en el 5432. Cambiad `POSTGRES_PORT_HOST`
