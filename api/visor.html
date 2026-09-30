@@ -87,6 +87,12 @@
   .pager button { padding: 4px 10px; background: transparent; color: var(--text); border-color: var(--border); font-weight: 400; }
   .vacio { color: var(--muted); text-align: center; padding: 28px 0; }
   .oculto { display: none; }
+  details.meta { margin: -4px 0 16px; font-size: 13px; color: var(--muted); }
+  details.meta summary { cursor: pointer; width: fit-content; }
+  details.meta pre {
+    margin: 8px 0 0; padding: 12px; overflow-x: auto; font-size: 12px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  }
 </style>
 </head>
 <body>
@@ -119,6 +125,11 @@
       <div class="card"><div class="k">Importe total</div><div class="v" id="c-total"></div></div>
       <div class="card"><div class="k">Distancia media</div><div class="v" id="c-dist"></div></div>
     </div>
+
+    <details class="meta">
+      <summary>Ver <code>meta</code> de la respuesta <span id="as-of"></span></summary>
+      <pre id="meta-json"></pre>
+    </details>
 
     <section class="panel">
       <h2>¿De qué tier sale cada tramo?</h2>
@@ -257,6 +268,8 @@ function pintar({data, meta}, desde, hasta, limite) {
   const dist = filas.length ? filas.reduce((s, f) => s + (f.trip_distance || 0), 0) / filas.length : 0;
   $("c-total").textContent = fmtEur.format(total);
   $("c-dist").textContent = `${dist.toFixed(2)} mi`;
+  $("as-of").textContent = `· as_of ${fmtFecha(meta.as_of)} UTC`;
+  $("meta-json").textContent = JSON.stringify(meta, null, 2);
 
   if (meta.rows >= limite) {
     mensaje(`Se ha llegado al límite de ${fmtNum.format(limite)} filas: hay más viajes en el rango de los que se muestran. Subid el límite o acotad el rango.`, "warn");
