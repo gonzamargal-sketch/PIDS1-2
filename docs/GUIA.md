@@ -5,8 +5,8 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-09-30 · Visor web de `/trips` en
-> `localhost:8000/visor`. Los cuatro bloques en `main`. El
+> **Última actualización:** 2026-09-30 · Frontend web de la API en
+> `localhost:8000/app/` ([5.8](#58-frontend-web-p3)). Los cuatro bloques en `main`. El
 > [paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
 > funciona; el [paso 7](#7-qué-podéis-hacer-vosotros-tocar-el-sistema), para
 > **tocarlo**: meter viajes, cambiar la política, mover datos y provocar fallos.
@@ -135,7 +135,7 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 | **Airflow** · http://localhost:8080 | sin login | Los 4 DAGs de P4 |
 | **Grafana** · http://localhost:3000 | `admin` / `admin` | Dashboard «E8 · Ciclo de vida de los datos» (se refresca cada 30 s) |
 | **MinIO** · http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` | Buckets `bronze` (CSV crudos) y `lakehouse` (Parquet de Iceberg) |
-| **Visor** · http://localhost:8000/visor | — | Página para ver los viajes de un rango de fechas: tabla, de qué tier sale cada tramo e histograma |
+| **Frontend** · http://localhost:8000/app/ | — | La API con interfaz: recorrido de un dato, viajes por rango, política y archivado en directo, métricas y explorador de rutas ([5.8](#58-frontend-web-p3)) |
 | **API** · http://localhost:8000/docs | — | Swagger: todos los endpoints, con botón *Try it out* |
 
 ### 5.1 Servicios (todos)
@@ -245,11 +245,7 @@ consulta y otra.
 
 ### 5.7 Referencia rápida de la API (P3)
 
-**Para verlo sin curl:** http://localhost:8000/visor (o `localhost:8000/`, que
-redirige). Se elige *desde* / *hasta* (en UTC) o un rango rápido —«Cruzando
-la frontera» enseña el router con los dos tiers— y sale el origen de los datos,
-la latencia, la barra de tramos del `coverage`, un histograma coloreado por tier
-y la tabla de viajes. La URL guarda el rango, así que se puede compartir.
+**Para verlo sin curl:** el frontend ([5.8](#58-frontend-web-p3)).
 
 Toda respuesta que toca datos lleva `data` + `meta` (`data_source`,
 `coverage`, `as_of`, `latency_ms`, `rows`), y cada llamada deja una fila en
@@ -281,6 +277,25 @@ día del caliente, no «hace 30 días a esta hora». Explicación completa en
 Referencia de la prueba en instalación limpia (3M de filas; con 1M, todo en
 proporción): Kafka 35.800 emitidos = 35.800 recibidos; una fila ocupa
 **~320 B en PostgreSQL y ~54 B en Iceberg** (unas 6 veces menos).
+
+### 5.8 Frontend web (P3)
+
+http://localhost:8000/app/ (también `localhost:8000/`, que redirige). Es
+HTML + JS sin compilar en `api/web/`, servido por la propia API: no hay que
+levantar nada más, y como la carpeta está montada, un cambio se ve recargando
+la página. Solo usa las rutas de siempre; no tiene lógica propia.
+
+| Pestaña | Rutas que usa | Qué probar | Tiene que salir |
+|---|---|---|---|
+| **Inicio** | `/stats`, `/lifecycle/*`, `/metrics/coste`, `/metrics/calidad` | Abrirla | El recorrido entrada → caliente → frío → borrado con las filas de cada tier, cumplimiento **OK** y el frío ocupando varias veces menos por fila |
+| **Viajes** | `/trips` | Rango rápido «Cruzando la frontera» | Origen **mixto**, la barra de tramos con frío y caliente tocándose a las 00:00, el histograma en dos colores y cada viaje con su etiqueta de tier |
+| **Ciclo de vida** | `/lifecycle/policy` (GET y PUT), `/lifecycle/status` | «Demo: 5 minutos» (pide confirmación) | «N particiones pasan a estar pendientes»; en ≤ 5 min la máquina de estados las mueve a `DESALOJADO` sola (se refresca cada 5 s). **Al acabar, «Volver a 30 días»** |
+| **Métricas** | `/metrics/{coste,latencia,calidad,caliente}` | Abrirla tras hacer unas consultas | Bytes por fila por tier, p95 por tier con su objetivo en verde y los motivos de cuarentena |
+| **Explorador** | Todas | «Errores a propósito» y *Enviar* en cada ruta | `400`, `404` y `422` respectivamente; cada ruta con su `curl` para copiar y el JSON de respuesta. Abajo, el registro de todas las llamadas del frontend |
+
+Cada bloque lleva debajo el `meta` de su respuesta (ruta, `data_source`,
+latencia, `as_of`), desplegable para ver el JSON. Las horas, siempre en UTC.
+`localhost:8000/visor` (el visor de antes) redirige a la pestaña Viajes.
 
 ---
 
