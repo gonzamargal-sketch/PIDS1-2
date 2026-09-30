@@ -5,7 +5,8 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-09-28 · Los cuatro bloques en `main`. El
+> **Última actualización:** 2026-09-30 · Visor web de `/trips` en
+> `localhost:8000/visor`. Los cuatro bloques en `main`. El
 > [paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
 > funciona; el [paso 7](#7-qué-podéis-hacer-vosotros-tocar-el-sistema), para
 > **tocarlo**: meter viajes, cambiar la política, mover datos y provocar fallos.
@@ -134,6 +135,7 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 | **Airflow** · http://localhost:8080 | sin login | Los 4 DAGs de P4 |
 | **Grafana** · http://localhost:3000 | `admin` / `admin` | Dashboard «E8 · Ciclo de vida de los datos» (se refresca cada 30 s) |
 | **MinIO** · http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` | Buckets `bronze` (CSV crudos) y `lakehouse` (Parquet de Iceberg) |
+| **Visor** · http://localhost:8000/visor | — | Página para ver los viajes de un rango de fechas: tabla, de qué tier sale cada tramo e histograma |
 | **API** · http://localhost:8000/docs | — | Swagger: todos los endpoints, con botón *Try it out* |
 
 ### 5.1 Servicios (todos)
@@ -242,6 +244,12 @@ encendido, parad antes el simulador, que si no el caliente cambia entre una
 consulta y otra.
 
 ### 5.7 Referencia rápida de la API (P3)
+
+**Para verlo sin curl:** http://localhost:8000/visor (o `localhost:8000/`, que
+redirige). Se elige *desde* / *hasta* (en UTC) o un rango rápido —«Cruzando
+la frontera» enseña el router con los dos tiers— y sale el origen de los datos,
+la latencia, la barra de tramos del `coverage`, un histograma coloreado por tier
+y la tabla de viajes. La URL guarda el rango, así que se puede compartir.
 
 Toda respuesta que toca datos lleva `data` + `meta` (`data_source`,
 `coverage`, `as_of`, `latency_ms`, `rows`), y cada llamada deja una fila en
