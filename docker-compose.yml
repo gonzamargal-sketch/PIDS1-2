@@ -325,6 +325,7 @@ services:
     environment:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       CHATBOT_MODELO: ${CHATBOT_MODELO:-}
+      CHATBOT_MODELOS_RESPALDO: ${CHATBOT_MODELOS_RESPALDO:-}
       CHATBOT_API_URL: http://api:8000
     command: ["uvicorn", "chatbot.servidor:app", "--host", "0.0.0.0", "--port", "8001", "--reload", "--reload-dir", "/app/chatbot"]
     ports:

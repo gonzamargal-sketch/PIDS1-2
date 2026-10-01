@@ -597,13 +597,20 @@ Streamlit (chat-ui, :8501) → FastAPI (chatbot, :8001) → SDK openai → OpenR
   hace de modelo (intención, zona y fechas) y propone las mismas llamadas a
   herramientas. Sirve para probar todo el circuito sin coste. No entiende el
   contexto de la conversación ni frases complicadas: eso lo hace el modelo real.
-- **Con el modelo real:** poned la clave en `.env` y recread el servicio. La
-  clave solo llega al contenedor `chatbot`; la interfaz nunca la ve.
+- **Con el modelo real (gratis):** por defecto usa modelos **gratuitos** de
+  OpenRouter (sufijo `:free`): `qwen/qwen3.8-27b:free` y, si está saturado o
+  limitado, OpenRouter salta solo a `google/gemma-4-31b-it:free` y luego a
+  `nvidia/nemotron-3-super-120b-a12b:free`. Hace falta igualmente una clave
+  (cuenta gratuita en openrouter.ai, sin saldo). Los gratuitos tienen cupo de
+  peticiones por minuto y por día: si se agota, el chat lo dice y basta con
+  esperar. La clave solo llega al contenedor `chatbot`; la interfaz nunca la ve.
 
   ```bash
   # en .env (sale de https://openrouter.ai/keys)
   OPENROUTER_API_KEY=sk-or-v1-...
-  CHATBOT_MODELO=google/gemini-2.5-flash-lite      # opcional: cualquiera con tools
+  # opcionales: cualquier modelo con tools; vacíos = los gratuitos de arriba
+  CHATBOT_MODELO=
+  CHATBOT_MODELOS_RESPALDO=
   ```
   ```bash
   docker compose --profile core --profile chat up -d --force-recreate chatbot
@@ -625,7 +632,7 @@ Streamlit (chat-ui, :8501) → FastAPI (chatbot, :8001) → SDK openai → OpenR
 Cada llamada se valida con Pydantic y con las reglas del escenario antes de
 tocar la API (solo 2026, nada del futuro, `inicio < fin`, zonas 1-265, como
 mucho 20 viajes), y devuelve valor, periodo y origen (tier y `as_of`). Límites:
-5 pasos de herramientas, 90 s por pregunta, 30 s por llamada y 700 tokens por
+5 pasos de herramientas, 90 s por pregunta, 30 s por llamada y 1.500 tokens por
 respuesta (`CHATBOT_*` en `chatbot/config.py`).
 
 **Comprobar que funciona:**
@@ -640,7 +647,8 @@ respuesta (`CHATBOT_*` en `chatbot/config.py`).
 | Explorador del frontend → `GET /trips/resumen` | Totales con `meta`; los de un rango mixto = caliente + frío |
 
 Cada respuesta enseña en «Cómo lo he resuelto» las herramientas, los argumentos
-ya validados, el resultado de la API, los tokens y el coste.
+ya validados, el resultado de la API, los tokens, el coste (0 $ con los
+gratuitos) y qué modelo respondió de verdad (el principal o uno de respaldo).
 
 ---
 

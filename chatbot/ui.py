@@ -59,7 +59,8 @@ def detalle(r: dict) -> None:
     coste = uso.get("coste_usd")
     resumen = (f"{len(pasos)} herramienta(s) · {uso.get('llamadas_modelo', 0)} llamada(s) al modelo · "
                f"{uso.get('tokens_entrada', 0) + uso.get('tokens_salida', 0):,} tokens · "
-               + (f"{coste:.5f} $" if coste is not None else "coste 0 $") + f" · {r.get('ms', 0) / 1000:.1f} s")
+               + (f"{coste:.5f} $" if coste is not None else "coste 0 $") + f" · {r.get('ms', 0) / 1000:.1f} s"
+               + (f" · {r['modelo']}" if r.get("modo") == "openrouter" else ""))
     with st.expander("Cómo lo he resuelto"):
         st.caption(resumen.replace(",", "."))
         if r.get("aviso"):
@@ -87,6 +88,8 @@ with st.sidebar:
         st.error("Backend del chatbot sin respuesta")
     elif salud["modo"] == "openrouter":
         st.success(f"Modelo: `{salud['modelo']}` vía OpenRouter")
+        if salud.get("respaldo"):
+            st.caption("Respaldo si falla o está limitado: " + ", ".join(f"`{m}`" for m in salud["respaldo"]))
     else:
         st.info("**Modo simulado**: sin clave de OpenRouter responde un analizador por reglas. "
                 "Poned `OPENROUTER_API_KEY` en `.env` y recread el servicio `chatbot` para usar el modelo real.")

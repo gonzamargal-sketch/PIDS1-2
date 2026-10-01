@@ -106,14 +106,18 @@ def _llamar_modelo(c, mensajes: list[dict], con_herramientas: bool):
             tool_choice="auto" if con_herramientas else "none",
             max_tokens=config.MAX_TOKENS,
             temperature=0.2,
-            extra_body={"usage": {"include": True}},  # OpenRouter: devuelve el coste
+            # OpenRouter: devuelve el coste, y si el modelo falla o está
+            # limitado prueba los de respaldo en orden
+            extra_body={"usage": {"include": True},
+                        "models": [config.MODELO, *[m for m in config.RESPALDO if m != config.MODELO]]},
         )
     except openai.AuthenticationError as e:
         raise ErrorModelo("OpenRouter rechaza la clave (OPENROUTER_API_KEY). Revisad el .env.") from e
     except openai.PermissionDeniedError as e:
         raise ErrorModelo("OpenRouter deniega el acceso: suele ser saldo insuficiente o límite de la clave.") from e
     except openai.RateLimitError as e:
-        raise ErrorModelo("Límite de peticiones de OpenRouter alcanzado. Esperad unos segundos.") from e
+        raise ErrorModelo("Límite de peticiones alcanzado en el modelo y en los de respaldo (los gratuitos "
+                          "tienen cupo por minuto y por día). Esperad un poco o cambiad CHATBOT_MODELO.") from e
     except openai.NotFoundError as e:
         raise ErrorModelo(f"El modelo '{config.MODELO}' no existe en OpenRouter (CHATBOT_MODELO).") from e
     except openai.APITimeoutError as e:
@@ -138,6 +142,8 @@ def responder(historial: list[dict]) -> Resultado:
             resultado.aviso = "Se alcanzó el límite de pasos o de tiempo; la respuesta usa lo obtenido hasta entonces."
         r = _llamar_modelo(c, mensajes, con_herramientas=not agotado)
         resultado.uso.sumar(r.usage)
+        if config.MODO == "openrouter" and r.model:
+            resultado.modelo = r.model  # el que respondió de verdad (puede ser uno de respaldo)
         msg = r.choices[0].message
 
         if not msg.tool_calls or agotado:

@@ -14,9 +14,16 @@ import os
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 
-# Cualquier modelo de OpenRouter que admita tools. El de por defecto es
-# barato (~0,10 $ / 1M tokens de entrada) y sigue bien las herramientas.
-MODELO = os.environ.get("CHATBOT_MODELO", "").strip() or "google/gemini-2.5-flash-lite"
+# Cualquier modelo de OpenRouter que admita tools. Por defecto, gratuitos
+# (sufijo :free): no cuestan nada pero tienen límite de peticiones y a
+# veces están saturados, así que se pasa una lista de respaldo y OpenRouter
+# salta solo al siguiente si el primero falla o está limitado.
+MODELO = os.environ.get("CHATBOT_MODELO", "").strip() or "qwen/qwen3.8-27b:free"
+# (`or`, no default de get: docker compose pasa la variable vacía si no está en .env)
+RESPALDO = [m.strip() for m in (
+    os.environ.get("CHATBOT_MODELOS_RESPALDO", "").strip()
+    or "google/gemma-4-31b-it:free,nvidia/nemotron-3-super-120b-a12b:free"
+).split(",") if m.strip()]
 
 MODO = "openrouter" if OPENROUTER_API_KEY else "simulado"
 
@@ -28,5 +35,7 @@ MAX_PASOS = int(os.environ.get("CHATBOT_MAX_PASOS", "5"))
 PRESUPUESTO_S = float(os.environ.get("CHATBOT_PRESUPUESTO_S", "90"))   # por pregunta, en total
 TIMEOUT_MODELO_S = float(os.environ.get("CHATBOT_TIMEOUT_MODELO_S", "30"))
 TIMEOUT_API_S = float(os.environ.get("CHATBOT_TIMEOUT_API_S", "30"))
-MAX_TOKENS = int(os.environ.get("CHATBOT_MAX_TOKENS", "700"))           # por respuesta del modelo
+# Por respuesta del modelo. Holgado porque algunos modelos gratuitos
+# «razonan» antes de contestar y eso también gasta tokens.
+MAX_TOKENS = int(os.environ.get("CHATBOT_MAX_TOKENS", "1500"))
 MAX_HISTORIAL = int(os.environ.get("CHATBOT_MAX_HISTORIAL", "12"))      # mensajes previos que se reenvían

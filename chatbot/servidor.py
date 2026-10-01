@@ -40,8 +40,9 @@ class Peticion(BaseModel):
 
 @app.get("/health")
 def health() -> dict:
-    return {"estado": "ok", "modo": config.MODO, "modelo": config.MODELO if config.MODO == "openrouter" else "simulado",
-            "api_datos": config.API_URL}
+    real = config.MODO == "openrouter"
+    return {"estado": "ok", "modo": config.MODO, "modelo": config.MODELO if real else "simulado",
+            "respaldo": config.RESPALDO if real else [], "api_datos": config.API_URL}
 
 
 @app.get("/herramientas")
