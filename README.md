@@ -88,6 +88,7 @@ Nadie necesita levantarlo todo para trabajar en lo suyo:
 docker compose --profile core up -d                     # ~1,3 GB, siempre
 docker compose --profile core --profile stream up -d    # + Kafka, consumidor y simulador
 docker compose --profile core --profile orch up -d      # + Airflow
+docker compose --profile core --profile chat up -d      # + chatbot de la Parte 3 (localhost:8501)
 docker compose --profile "*" up -d                      # todo (integración y vídeo)
 ```
 

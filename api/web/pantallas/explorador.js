@@ -22,6 +22,16 @@ const RUTAS = [
     ],
     construir: (c) => ({ ruta: "/trips?" + new URLSearchParams(c) }),
   },
+  {
+    id: "resumen", metodo: "GET", ruta: "/trips/resumen", desc: "Totales de un periodo (viajes, ingresos, propinas…) sumados en los dos tiers. La usa el chatbot",
+    campos: [
+      { n: "desde", tipo: "text", v: () => haceDias(40) },
+      { n: "hasta", tipo: "text", v: () => hoy() },
+      { n: "zona", tipo: "text", v: () => "" },
+      { n: "agrupar", tipo: "select", opciones: ["ninguno", "dia", "zona"], v: () => "ninguno" },
+    ],
+    construir: (c) => ({ ruta: "/trips/resumen?" + new URLSearchParams(Object.entries(c).filter(([, v]) => v !== "")) }),
+  },
   { id: "policy-get", metodo: "GET", ruta: "/lifecycle/policy", desc: "Las políticas de retención vigentes", campos: [] },
   {
     id: "policy-put", metodo: "PUT", ruta: "/lifecycle/policy", desc: "Cambia el umbral de una política. Afecta al archivado real",
