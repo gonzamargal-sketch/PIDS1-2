@@ -5,7 +5,9 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-09-28 · Los cuatro bloques en `main`. El
+> **Última actualización:** 2026-10-01 · Chatbot de la Parte 3 (perfil
+> `chat`, [paso 8](#8-chatbot-parte-3)) y frontend web de la API en
+> `localhost:8000/app/` ([5.8](#58-frontend-web-p3)). El
 > [paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
 > funciona; el [paso 7](#7-qué-podéis-hacer-vosotros-tocar-el-sistema), para
 > **tocarlo**: meter viajes, cambiar la política, mover datos y provocar fallos.
@@ -20,6 +22,7 @@ algo.
 | **P2** · Ingesta | Simulador con jitter, Kafka, consumidor → caliente + cuarentena | ✅ en `main` |
 | **P3** · Acceso | API: `/trips` con router de tiers, métricas, `/lifecycle/*` | ✅ en `main` |
 | **P4** · Orquestación y observabilidad | 4 DAGs de Airflow, dashboard de Grafana | ✅ en `main` |
+| **Parte 3** · Chatbot | Streamlit → FastAPI → OpenRouter con herramientas sobre la API; ruta `/trips/resumen` | 🔶 rama `parte3/chatbot` |
 
 **Datos de trabajo:** de 2026, del 1 de enero hasta *ahora*, nunca en el
 futuro. La muestra real (`datos/muestra_1000.csv`) es la semilla; el volumen lo
@@ -134,7 +137,9 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 | **Airflow** · http://localhost:8080 | sin login | Los 4 DAGs de P4 |
 | **Grafana** · http://localhost:3000 | `admin` / `admin` | Dashboard «E8 · Ciclo de vida de los datos» (se refresca cada 30 s) |
 | **MinIO** · http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` | Buckets `bronze` (CSV crudos) y `lakehouse` (Parquet de Iceberg) |
+| **Frontend** · http://localhost:8000/app/ | — | La API con interfaz: recorrido de un dato, viajes por rango, política y archivado en directo, métricas y explorador de rutas ([5.8](#58-frontend-web-p3)) |
 | **API** · http://localhost:8000/docs | — | Swagger: todos los endpoints, con botón *Try it out* |
+| **Chatbot** · http://localhost:8501 | — | Asistente de la Parte 3 (perfil `chat`, [paso 8](#8-chatbot-parte-3)) |
 
 ### 5.1 Servicios (todos)
 
@@ -243,6 +248,8 @@ consulta y otra.
 
 ### 5.7 Referencia rápida de la API (P3)
 
+**Para verlo sin curl:** el frontend ([5.8](#58-frontend-web-p3)).
+
 Toda respuesta que toca datos lleva `data` + `meta` (`data_source`,
 `coverage`, `as_of`, `latency_ms`, `rows`), y cada llamada deja una fila en
 `query_log`, que es de donde salen las latencias por tier de Grafana.
@@ -273,6 +280,25 @@ día del caliente, no «hace 30 días a esta hora». Explicación completa en
 Referencia de la prueba en instalación limpia (3M de filas; con 1M, todo en
 proporción): Kafka 35.800 emitidos = 35.800 recibidos; una fila ocupa
 **~320 B en PostgreSQL y ~54 B en Iceberg** (unas 6 veces menos).
+
+### 5.8 Frontend web (P3)
+
+http://localhost:8000/app/ (también `localhost:8000/`, que redirige). Es
+HTML + JS sin compilar en `api/web/`, servido por la propia API: no hay que
+levantar nada más, y como la carpeta está montada, un cambio se ve recargando
+la página. Solo usa las rutas de siempre; no tiene lógica propia.
+
+| Pestaña | Rutas que usa | Qué probar | Tiene que salir |
+|---|---|---|---|
+| **Inicio** | `/stats`, `/lifecycle/*`, `/metrics/coste`, `/metrics/calidad` | Abrirla | El recorrido entrada → caliente → frío → borrado con las filas de cada tier, cumplimiento **OK** y el frío ocupando varias veces menos por fila |
+| **Viajes** | `/trips` | Rango rápido «Cruzando la frontera» | Origen **mixto**, la barra de tramos con frío y caliente tocándose a las 00:00, el histograma en dos colores y cada viaje con su etiqueta de tier |
+| **Ciclo de vida** | `/lifecycle/policy` (GET y PUT), `/lifecycle/status` | «Demo: 5 minutos» (pide confirmación) | «N particiones pasan a estar pendientes»; en ≤ 5 min la máquina de estados las mueve a `DESALOJADO` sola (se refresca cada 5 s). **Al acabar, «Volver a 30 días»** |
+| **Métricas** | `/metrics/{coste,latencia,calidad,caliente}` | Abrirla tras hacer unas consultas | Bytes por fila por tier, p95 por tier con su objetivo en verde y los motivos de cuarentena |
+| **Explorador** | Todas | «Errores a propósito» y *Enviar* en cada ruta | `400`, `404` y `422` respectivamente; cada ruta con su `curl` para copiar y el JSON de respuesta. Abajo, el registro de todas las llamadas del frontend |
+
+Cada bloque lleva debajo el `meta` de su respuesta (ruta, `data_source`,
+latencia, `as_of`), desplegable para ver el JSON. Las horas, siempre en UTC.
+`localhost:8000/visor` (el visor de antes) redirige a la pestaña Viajes.
 
 ---
 
@@ -554,10 +580,82 @@ latencias para el vídeo.
 
 ---
 
+## 8. Chatbot (Parte 3)
+
+```bash
+docker compose --profile core --profile chat up -d --build   # la primera vez con --build
+```
+
+Abrid **http://localhost:8501** (o «Asistente ↗» en el menú del frontend).
+
+```
+Streamlit (chat-ui, :8501) → FastAPI (chatbot, :8001) → SDK openai → OpenRouter → modelo
+                                   └→ herramientas → API de la Parte 2 (/trips/resumen, /lifecycle…)
+```
+
+- **Sin clave funciona igual**, en **modo simulado**: un analizador por reglas
+  hace de modelo (intención, zona y fechas) y propone las mismas llamadas a
+  herramientas. Sirve para probar todo el circuito sin coste. No entiende el
+  contexto de la conversación ni frases complicadas: eso lo hace el modelo real.
+- **Con el modelo real (gratis):** por defecto usa modelos **gratuitos** de
+  OpenRouter (sufijo `:free`): `qwen/qwen3.8-27b:free` y, si está saturado o
+  limitado, OpenRouter salta solo a `google/gemma-4-31b-it:free` y luego a
+  `nvidia/nemotron-3-super-120b-a12b:free`. Hace falta igualmente una clave
+  (cuenta gratuita en openrouter.ai, sin saldo). Los gratuitos tienen cupo de
+  peticiones por minuto y por día: si se agota, el chat lo dice y basta con
+  esperar. La clave solo llega al contenedor `chatbot`; la interfaz nunca la ve.
+
+  ```bash
+  # en .env (sale de https://openrouter.ai/keys)
+  OPENROUTER_API_KEY=sk-or-v1-...
+  # opcionales: cualquier modelo con tools; vacíos = los gratuitos de arriba
+  CHATBOT_MODELO=
+  CHATBOT_MODELOS_RESPALDO=
+  ```
+  ```bash
+  docker compose --profile core --profile chat up -d --force-recreate chatbot
+  ```
+  La barra lateral del chat dice en qué modo está.
+
+**Herramientas** (todas de solo lectura; el contrato que ve el modelo está en
+`curl -s localhost:8001/herramientas`):
+
+| Herramienta | Qué hace | Llama a |
+|---|---|---|
+| `consultar_ingresos(inicio, fin, zona?)` | Viajes, ingresos, propinas, medias de un periodo | `/trips/resumen` |
+| `desglose_viajes(inicio, fin, por=dia\|zona)` | Evolución por día o ranking de zonas | `/trips/resumen?agrupar=` |
+| `buscar_zona(texto)` | «JFK» → zona 132 (tabla oficial de la TLC, `chatbot/datos/zonas_taxi.csv`) | — |
+| `ver_viajes(inicio, fin, limite≤20)` | Unos viajes de ejemplo | `/trips` |
+| `estado_ciclo_vida()` | Política, cumplimiento, particiones archivadas | `/lifecycle/*` |
+| `metricas(nombre)` | Coste, latencia, calidad o estado del caliente | `/metrics/*` |
+
+Cada llamada se valida con Pydantic y con las reglas del escenario antes de
+tocar la API (solo 2026, nada del futuro, `inicio < fin`, zonas 1-265, como
+mucho 20 viajes), y devuelve valor, periodo y origen (tier y `as_of`). Límites:
+5 pasos de herramientas, 90 s por pregunta, 30 s por llamada y 1.500 tokens por
+respuesta (`CHATBOT_*` en `chatbot/config.py`).
+
+**Comprobar que funciona:**
+
+| Ejecutar / tocar | Tiene que salir |
+|---|---|
+| `curl -s localhost:8001/health` | `estado: ok` y `modo: simulado` u `openrouter` |
+| Botón «¿Cuánto se facturó en JFK en agosto?» | Viajes e ingresos de JFK en agosto, con el origen (frío). En «Cómo lo he resuelto»: `buscar_zona` → `consultar_ingresos(zona=132)` |
+| «¿Qué zonas generaron más ingresos la última semana?» | Ranking con nombres de zona, origen caliente |
+| «¿Cuánto se facturó en noviembre?» | Que no hay datos del futuro (la herramienta lo rechaza; en modo real, el modelo lo explica) |
+| «Baja la política a 5 minutos» (modo real) | Que no puede: es de solo lectura y se hace desde el frontend |
+| Explorador del frontend → `GET /trips/resumen` | Totales con `meta`; los de un rango mixto = caliente + frío |
+
+Cada respuesta enseña en «Cómo lo he resuelto» las herramientas, los argumentos
+ya validados, el resultado de la API, los tokens, el coste (0 $ con los
+gratuitos) y qué modelo respondió de verdad (el principal o uno de respaldo).
+
+---
+
 ## Parar y retomar
 
 ```bash
-docker compose --profile "*" stop             # para todo y CONSERVA los datos
+docker compose --profile "*" stop             # para todo (chat incluido) y CONSERVA los datos
 docker compose --profile core --profile stream --profile orch --profile viz up -d   # retomar
 ```
 

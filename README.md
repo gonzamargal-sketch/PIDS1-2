@@ -88,6 +88,7 @@ Nadie necesita levantarlo todo para trabajar en lo suyo:
 docker compose --profile core up -d                     # ~1,3 GB, siempre
 docker compose --profile core --profile stream up -d    # + Kafka, consumidor y simulador
 docker compose --profile core --profile orch up -d      # + Airflow
+docker compose --profile core --profile chat up -d      # + chatbot de la Parte 3 (localhost:8501)
 docker compose --profile "*" up -d                      # todo (integración y vídeo)
 ```
 
@@ -531,6 +532,22 @@ cambiar de intérprete. Si de verdad no existe wheel, entonces sí hace falta un
 Python anterior. **Avisad al grupo antes de tocar los pines**: si sube uno, los
 demás tienen que rehacer su venv, y `pandas` 3.x tiene cambios de ruptura
 frente al 2.x, así que quien los suba pasa la prueba de humo antes de commitear.
+
+### La API sale `unhealthy` tras reiniciar el PC (`Could not import module "api.app"`)
+
+Docker Desktop arranca los contenedores solo, **antes** de que el disco de WSL
+esté montado, y los bind-mounts se quedan vacíos: la API sin código, Airflow
+sin DAGs y Grafana sin dashboard. Todo sale `Up`, pero nada funciona.
+
+Se comprueba con `docker compose exec api ls /app/api` (vacío = es esto) y se
+arregla recreando los contenedores, sin perder datos (están en volúmenes):
+
+```bash
+docker compose --profile core --profile orch --profile viz up -d --force-recreate
+```
+
+Mientras estuvo así, `archivar` no corrió: `v_cumplimiento_politica` puede
+salir `INCUMPLE` hasta la siguiente pasada (o lanzadla a mano desde Airflow).
 
 ### `port is already allocated`
 

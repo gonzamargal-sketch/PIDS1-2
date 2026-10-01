@@ -1,0 +1,6 @@
+# Servicios chatbot (FastAPI) y chat-ui (Streamlit). Misma imagen para los dos.
+fastapi==0.141.1
+uvicorn==0.53.0
+openai==3.22.1     # cliente compatible con OpenRouter (base_url)
+httpx==0.28.1      # llamadas a la API de la Parte 2
+streamlit==1.64.0
