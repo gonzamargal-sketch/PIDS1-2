@@ -686,3 +686,26 @@ guía:
 - [ ] **Mediciones (T5.1)**: las seis métricas de §7 con capturas, en
   `docs/MEDICIONES.md`.
 - [ ] **Memoria (T5.2)** y **vídeo (T5.3)**.
+
+**Chatbot (Parte 3)**, arreglos pendientes:
+
+- [ ] **Timeout que supera al de la interfaz.** El presupuesto de 90 s solo se
+  comprueba entre vueltas; con 30 s por llamada al modelo y un reintento
+  (`max_retries=1`), una pregunta de varias vueltas pasa de los 150 s que
+  espera Streamlit y sale «el backend no responde» aunque siga trabajando.
+  Arreglo: sin reintentos y cada llamada con el tiempo que quede del
+  presupuesto (`chatbot/agente.py`, `chatbot/config.py`).
+- [ ] **Respuesta vacía con modelos que razonan.** Si el razonamiento se come
+  los 1.500 tokens, `content` llega vacío y sale «No he podido generar una
+  respuesta». Arreglo: limitar el razonamiento (`reasoning` de OpenRouter) o
+  subir `CHATBOT_MAX_TOKENS`, y reintentar una vez si llega vacío.
+- [ ] **Ajuste de privacidad de OpenRouter.** Si en
+  https://openrouter.ai/settings/privacy no se permite a los proveedores
+  gratuitos usar los prompts, los `:free` dan 404 y el chat dice «el modelo
+  no existe». Arreglo: mensaje que lo explique y añadirlo al
+  [paso 8](#8-chatbot-parte-3).
+- [ ] **El modelo principal casi nunca responde.** `qwen3.8-27b:free` y
+  `gemma-4-31b-it:free` devuelven 429 *«temporarily rate-limited upstream»*
+  (saturación del proveedor, no de nuestra clave) y contesta siempre el
+  último respaldo, `nemotron-3-super-120b-a12b:free`. Arreglo: poner nemotron
+  primero y qwen y gemma de respaldo (`chatbot/config.py`, `.env.example`).
