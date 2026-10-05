@@ -5,7 +5,8 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-10-01 · Chatbot de la Parte 3 (perfil
+> **Última actualización:** 2026-10-05 · Guion del vídeo, escena a escena
+> ([paso 9](#9-guion-del-vídeo)). Antes: chatbot de la Parte 3 (perfil
 > `chat`, [paso 8](#8-chatbot-parte-3)) y frontend web de la API en
 > `localhost:8000/app/` ([5.8](#58-frontend-web-p3)). El
 > [paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
@@ -652,6 +653,175 @@ gratuitos) y qué modelo respondió de verdad (el principal o uno de respaldo).
 
 ---
 
+## 9. Guion del vídeo
+
+Se usan **los dos generadores**, cada uno para una cosa: el script
+(`generar_datos_sinteticos.py`) monta el **histórico** antes de grabar (frío,
+caliente y la frontera de 30 días), y el **simulador** va encendido durante la
+grabación para que se vea la ingesta en vivo. El simulador no sustituye al
+script: solo crea viajes de *ahora*, nunca del pasado.
+
+### 9.1 Antes de grabar (no sale en el vídeo)
+
+```bash
+# 1. Base limpia con el histórico (pasos 1 y 3)
+docker compose --profile "*" down -v
+docker compose --profile core --profile orch --profile viz up -d
+python scripts/generar_datos_sinteticos.py 1000000 --seed 42
+python ingesta/subir_bronze.py --origen datos/sinteticos
+python ingesta/carga_inicial.py --recrear
+
+# 2. Simulador más lento para grabar: en .env
+#    SIMULADOR_EVENTOS_POR_SEGUNDO=50
+#    (se ve entrar datos y el caliente no se dispara si hay que repetir tomas)
+
+# 3. Todo levantado, chat incluido si sale en el vídeo
+docker compose --profile core --profile stream --profile orch --profile viz --profile chat up -d
+```
+
+Y antes de darle a grabar:
+
+- [ ] La lista del [paso 5](#5-comprobar-que-todo-funciona) entera, en verde.
+- [ ] `pg "SELECT count(*) FROM taxi_trips_default;"` da `0`. Si no, los
+  viajes en vivo no tienen partición y el router no los ve: DAG
+  `mantener_particiones` → ▶.
+- [ ] **Hora**: todo va en UTC (en octubre, 2 horas menos que en España). No
+  grabéis cerca de las **02:00 hora española**, que es la medianoche UTC: cambia
+  el día y se mueven las particiones y la frontera a mitad de vídeo.
+- [ ] Unas cuantas consultas a `/trips` de los tres tipos (pestaña Viajes),
+  para que la fila 3 de Grafana (latencias) tenga datos.
+- [ ] Pestañas abiertas: frontend (`localhost:8000/app/`), Grafana (dashboard
+  «E8 · Ciclo de vida de los datos»), Airflow y, si sale, el chat
+  (`localhost:8501`). Un terminal con `source .venv/bin/activate` y el alias
+  `pg` del paso 5.
+
+### 9.2 Durante la grabación
+
+Las escenas van en este orden por un motivo: **la migración (escena 7) no se
+puede deshacer**, así que va al final. Si una toma de las escenas 1-6 sale
+mal, se repite sin más.
+
+**Escena 1 · El sistema y la política.** Frontend → **Inicio**: el recorrido
+entrada → caliente → frío → borrado, con las filas de cada tier, el
+cumplimiento en **OK** y el frío ocupando varias veces menos por fila. En
+Grafana, la fila 0: umbral de 30 días y custodia de 7 años.
+
+**Escena 2 · Ingesta en tiempo real.** En el terminal:
+
+```bash
+docker compose logs --tail 3 simulador      # "N emitidos", N subiendo
+docker compose logs --tail 3 consumidor     # "N recibidos → X en caliente, Y en cuarentena, 0 duplicados"
+pg "SELECT origen, count(*) FROM taxi_trips GROUP BY 1;"     # dos veces: 'stream' sube, 'carga_inicial' no
+pg "SELECT max(event_time), NOW() FROM taxi_trips WHERE origen='stream';"   # segundos de diferencia
+```
+
+Frontend → **Viajes** → rango rápido **«Última hora»**: origen `hot`, con
+viajes de hace segundos. Volver a consultar: hay más. En Grafana, fila 1: el
+área del caliente sube.
+
+**Escena 3 · Calidad de datos.** Mandar a mano un viaje bueno y un mensaje
+roto por Kafka:
+
+```bash
+python scripts/anadir_viaje.py --json --distancia 7 --importe 31 | \
+  docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic trips.raw
+echo 'esto no es json' | docker compose exec -T kafka \
+  /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic trips.raw
+docker compose logs --tail 2 consumidor     # uno más en caliente y uno más en cuarentena (hasta 10 s)
+```
+
+Después, fila 4 de Grafana o `pg "SELECT * FROM v_calidad;"`: aparece
+`mensaje_ilegible` junto con la suciedad que mete el simulador. Lo sucio va a
+cuarentena, nunca al caliente.
+
+**Escena 4 · Resiliencia.** Se cae el consumidor y no se pierde nada:
+
+```bash
+alias lag='docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group pids-consumidor'
+lag                                  # LAG cerca de 0
+docker compose stop consumidor       # el simulador sigue emitiendo a Kafka
+lag                                  # ~30 s después: el LAG ha crecido
+docker compose start consumidor
+lag                                  # vuelve a ~0
+docker compose logs --tail 3 consumidor     # sigue en "0 duplicados"
+```
+
+Qué explicar: Kafka guarda los mensajes mientras el consumidor está caído; el
+offset se confirma después del commit en PostgreSQL y la escritura hace
+`ON CONFLICT DO NOTHING`, así que al volver ni pierde ni duplica.
+
+**Escena 5 · El router de tiers.** Frontend → **Viajes**:
+
+1. Rango rápido **«Últimos 7 días»** → `hot`.
+2. Un rango de agosto, a mano (p. ej. del 1 al 3) → `cold`.
+3. Rango rápido **«Cruzando la frontera»** → `mixto`: la barra de tramos con
+   frío y caliente tocándose a las 00:00 y el histograma en dos colores.
+
+Opcional, para que cuadre a la fila: `docker compose stop simulador` y la
+prueba de [5.6](#56-p3--api) (filas de la API = caliente + frío). Luego
+`docker compose start simulador`.
+
+**Escena 6 · Chatbot** (si sale). En `localhost:8501`:
+
+- «¿Cuánto se facturó en JFK en agosto?» → responde desde el frío. Abrir «Cómo
+  lo he resuelto»: `buscar_zona` → `consultar_ingresos(zona=132)`.
+- «¿Qué zonas generaron más ingresos hoy?» → desde el caliente. Repetirla: la
+  cifra cambia porque siguen entrando viajes.
+- «¿Cuánto se facturó en noviembre?» → no hay datos del futuro.
+
+**Escena 7 · Migración caliente → frío.** El truco es congelar el archivado
+para enseñar que el router sigue a los datos y no a la política:
+
+```bash
+docker compose exec airflow airflow dags pause archivar
+```
+
+1. Frontend → **Ciclo de vida** → **«Demo: 5 minutos»** (pide confirmación):
+   «N particiones pasan a estar pendientes».
+2. Grafana, fila 0: cumplimiento en **INCUMPLE** y particiones pendientes > 0.
+3. Frontend → Viajes → «Cruzando la frontera» otra vez: **igual que antes**.
+   La política ha cambiado, pero los datos siguen en PostgreSQL y el router los
+   lee de ahí.
+4. Soltar el archivado y lanzarlo ya, sin esperar a la pasada de 5 min:
+
+   ```bash
+   docker compose exec airflow airflow dags unpause archivar
+   docker compose exec airflow airflow dags trigger archivar
+   ```
+
+5. Frontend → Ciclo de vida (se refresca cada 5 s) o Grafana «Máquina de
+   estados»: las particiones pasan por `ESCRIBIENDO → ESCRITO → VERIFICADO →
+   DESALOJADO`, de la más antigua a la más reciente.
+6. Al terminar:
+   - `pg "SELECT estado, count(*), sum(filas_origen) origen, sum(filas_escritas) escritas FROM archival_jobs GROUP BY 1;"`:
+     todo en `DESALOJADO` y `origen = escritas` (no se ha perdido ninguna fila).
+   - Grafana, fila 0: cumplimiento de vuelta en **OK**. Fila 1: el caliente
+     baja y el frío sube lo mismo. Lo de hoy (los viajes del simulador) sigue
+     en el caliente: no se archiva hasta mañana.
+   - Viajes: el rango que antes era `mixto` ahora es `cold`; uno de ayer a hoy
+     sale `mixto`, con la frontera a las 00:00 de hoy.
+   - Grafana, fila 3: el frío con más latencia que el caliente, los dos dentro
+     del SLA.
+
+**Escena 8 · Cierre.** Frontend → Ciclo de vida → **«Volver a 30 días»**:
+`particiones_candidatas_ahora: 0`. Los datos movidos se quedan en el frío.
+
+### 9.3 Después de grabar
+
+```bash
+docker compose stop simulador                 # que el caliente no siga creciendo
+```
+
+- Devolved `SIMULADOR_EVENTOS_POR_SEGUNDO=200` en `.env` si queréis el valor
+  por defecto.
+- Comprobad que `archivar` no se ha quedado en pausa (interruptor en Airflow).
+- **Repetir la escena 7** (o el vídeo entero) obliga a volver a cargar el
+  histórico: `python ingesta/carga_inicial.py --recrear` (~1 min) y otra vez
+  la política a 30 días. Las escenas 1-6 se pueden repetir sin esto.
+
+---
+
 ## Parar y retomar
 
 ```bash
@@ -681,8 +851,31 @@ Y para tener los datos de 2026, los pasos 3 y 4.
 Lo que falta para tener todo E8, en el orden en que se irá añadiendo a esta
 guía:
 
-- [ ] **Consultas de ejemplo del vídeo** con las fechas definitivas (solo
-  caliente, solo frío y una que cruce la frontera).
+- [x] **Guion del vídeo**: [paso 9](#9-guion-del-vídeo). Las consultas usan
+  los rangos rápidos del frontend, así que valen el día que se grabe.
 - [ ] **Mediciones (T5.1)**: las seis métricas de §7 con capturas, en
   `docs/MEDICIONES.md`.
 - [ ] **Memoria (T5.2)** y **vídeo (T5.3)**.
+
+**Chatbot (Parte 3)**, arreglos pendientes:
+
+- [ ] **Timeout que supera al de la interfaz.** El presupuesto de 90 s solo se
+  comprueba entre vueltas; con 30 s por llamada al modelo y un reintento
+  (`max_retries=1`), una pregunta de varias vueltas pasa de los 150 s que
+  espera Streamlit y sale «el backend no responde» aunque siga trabajando.
+  Arreglo: sin reintentos y cada llamada con el tiempo que quede del
+  presupuesto (`chatbot/agente.py`, `chatbot/config.py`).
+- [ ] **Respuesta vacía con modelos que razonan.** Si el razonamiento se come
+  los 1.500 tokens, `content` llega vacío y sale «No he podido generar una
+  respuesta». Arreglo: limitar el razonamiento (`reasoning` de OpenRouter) o
+  subir `CHATBOT_MAX_TOKENS`, y reintentar una vez si llega vacío.
+- [ ] **Ajuste de privacidad de OpenRouter.** Si en
+  https://openrouter.ai/settings/privacy no se permite a los proveedores
+  gratuitos usar los prompts, los `:free` dan 404 y el chat dice «el modelo
+  no existe». Arreglo: mensaje que lo explique y añadirlo al
+  [paso 8](#8-chatbot-parte-3).
+- [ ] **El modelo principal casi nunca responde.** `qwen3.8-27b:free` y
+  `gemma-4-31b-it:free` devuelven 429 *«temporarily rate-limited upstream»*
+  (saturación del proveedor, no de nuestra clave) y contesta siempre el
+  último respaldo, `nemotron-3-super-120b-a12b:free`. Arreglo: poner nemotron
+  primero y qwen y gemma de respaldo (`chatbot/config.py`, `.env.example`).
