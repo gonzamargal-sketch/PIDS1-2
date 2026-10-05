@@ -48,6 +48,11 @@ const RUTAS = [
   },
   { id: "status", metodo: "GET", ruta: "/lifecycle/status", desc: "Jobs de archivado, candidatas y cumplimiento", campos: [] },
   {
+    id: "ingesta", metodo: "GET", ruta: "/ingesta", desc: "Lo que llega ahora del flujo en vivo: llegadas por intervalo, ritmo, retraso y lo metido a mano. La usa la pestaña En vivo",
+    campos: [{ n: "ventana", tipo: "number", v: () => 300 }, { n: "paso", tipo: "number", v: () => 5 }],
+    construir: (c) => ({ ruta: "/ingesta?" + new URLSearchParams(c) }),
+  },
+  {
     id: "metrics", metodo: "GET", ruta: "/metrics/{nombre}", desc: "Una vista de métricas de PostgreSQL",
     campos: [{ n: "nombre", tipo: "select", opciones: ["coste", "latencia", "calidad", "caliente", "noexiste"], v: () => "coste" }],
     construir: (c) => ({ ruta: `/metrics/${encodeURIComponent(c.nombre)}` }),

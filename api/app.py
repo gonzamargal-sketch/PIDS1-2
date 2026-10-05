@@ -19,6 +19,7 @@ from psycopg2.extensions import connection as PGConnection
 from api.dependencias import dict_cursor, get_conn, get_tabla_iceberg
 from api.instrumentacion import ahora_utc, cronometrar, registrar_consulta
 from api.rutas_ciclo_vida import router as router_ciclo_vida
+from api.rutas_ingesta import router as router_ingesta
 from api.rutas_metricas import router as router_metricas
 from api.rutas_resumen import router as router_resumen
 from api.rutas_trips import router as router_trips
@@ -32,6 +33,7 @@ app.include_router(router_resumen)  # antes que /trips por claridad; no se pisan
 app.include_router(router_trips)
 app.include_router(router_metricas)
 app.include_router(router_ciclo_vida)
+app.include_router(router_ingesta)
 app.include_router(router_web)
 app.mount("/app", estaticos, name="web")
 
