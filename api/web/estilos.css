@@ -122,6 +122,7 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   font-weight: 400; padding: 4px 11px; border-radius: 999px; font-size: 13px;
 }
 .chip-btn:hover { border-color: var(--accent); color: var(--accent); }
+.chip-btn.activo { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .interruptor { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
 
 /* ── Mensajes ───────────────────────────────────────────────── */

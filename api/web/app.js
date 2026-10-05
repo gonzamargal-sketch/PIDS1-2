@@ -6,11 +6,12 @@ import { api } from "./api.js";
 import { $, $$ } from "./comun.js";
 import * as inicio from "./pantallas/inicio.js";
 import * as viajes from "./pantallas/viajes.js";
+import * as envivo from "./pantallas/envivo.js";
 import * as ciclo from "./pantallas/ciclo.js";
 import * as metricas from "./pantallas/metricas.js";
 import * as explorador from "./pantallas/explorador.js";
 
-const PANTALLAS = { "": inicio, viajes, ciclo, metricas, explorador };
+const PANTALLAS = { "": inicio, envivo, viajes, ciclo, metricas, explorador };
 
 let desmontar = null;
 

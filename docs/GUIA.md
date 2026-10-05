@@ -5,8 +5,9 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-10-05 · Guion del vídeo, escena a escena
-> ([paso 9](#9-guion-del-vídeo)). Antes: chatbot de la Parte 3 (perfil
+> **Última actualización:** 2026-10-05 · Pestaña **En vivo** del frontend
+> (ingesta en directo, [5.8](#58-frontend-web-p3)) y el guion del vídeo hecho
+> desde el navegador ([paso 9](#9-guion-del-vídeo)). Antes: chatbot de la Parte 3 (perfil
 > `chat`, [paso 8](#8-chatbot-parte-3)) y frontend web de la API en
 > `localhost:8000/app/` ([5.8](#58-frontend-web-p3)). El
 > [paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
@@ -138,7 +139,7 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 | **Airflow** · http://localhost:8080 | sin login | Los 4 DAGs de P4 |
 | **Grafana** · http://localhost:3000 | `admin` / `admin` | Dashboard «E8 · Ciclo de vida de los datos» (se refresca cada 30 s) |
 | **MinIO** · http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` | Buckets `bronze` (CSV crudos) y `lakehouse` (Parquet de Iceberg) |
-| **Frontend** · http://localhost:8000/app/ | — | La API con interfaz: recorrido de un dato, viajes por rango, política y archivado en directo, métricas y explorador de rutas ([5.8](#58-frontend-web-p3)) |
+| **Frontend** · http://localhost:8000/app/ | — | La API con interfaz: recorrido de un dato, ingesta en vivo, viajes por rango, política y archivado en directo, métricas y explorador de rutas ([5.8](#58-frontend-web-p3)) |
 | **API** · http://localhost:8000/docs | — | Swagger: todos los endpoints, con botón *Try it out* |
 | **Chatbot** · http://localhost:8501 | — | Asistente de la Parte 3 (perfil `chat`, [paso 8](#8-chatbot-parte-3)) |
 
@@ -170,6 +171,7 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 |---|---|
 | `docker compose logs --tail 3 simulador` | `N emitidos (200 ev/s de media)`, con N subiendo. Al arrancar sale `Emitiendo a 'kafka' · 200.0 ev/s · … · jitter=True` |
 | `docker compose logs --tail 3 consumidor` | `N recibidos → X en caliente, Y en cuarentena, 0 duplicados`, con N subiendo |
+| Frontend → **En vivo** (o `curl -s localhost:8000/ingesta`) | Ritmo en torno a 200/s, último viaje llegado hace segundos y retraso ~0 |
 | `pg "SELECT origen, count(*) FROM taxi_trips GROUP BY 1;"` (dos veces, con unos segundos entre medias) | `stream` sube ~200 por segundo; `carga_inicial` no cambia |
 | `pg "SELECT max(event_time), NOW() FROM taxi_trips WHERE origen='stream';"` | El último evento, de hace unos segundos |
 | `pg "SELECT * FROM v_calidad;"` | Motivos de rechazo (`fecha_fuera_de_rango`, `tipo_invalido`…) con registros: la suciedad del simulador acaba en cuarentena, no en el caliente |
@@ -185,7 +187,9 @@ docker compose logs --tail 3 consumidor
 ```
 
 Tiene que salir: el `LAG` vuelve a ~0 y el consumidor sigue con `0 duplicados`.
-Kafka guardó los mensajes mientras estaba parado.
+Kafka guardó los mensajes mientras estaba parado. En la pestaña **En vivo** del
+frontend se ve sin comandos: el hueco, el pico al volver y el retraso subiendo y
+bajando.
 
 Para parar solo el simulador: `docker compose stop simulador`. El contador de
 `stream` deja de subir.
@@ -260,6 +264,7 @@ curl -s localhost:8000/stats                  # filas en caliente + estadística
 curl -s localhost:8000/lifecycle/policy       # la política vigente
 curl -s localhost:8000/lifecycle/status       # archival_jobs, candidatas y cumplimiento
 curl -s localhost:8000/metrics/coste          # también: latencia, calidad, caliente
+curl -s localhost:8000/ingesta                # lo que llega ahora del flujo en vivo (no va a query_log)
 
 # El router de tiers: /trips filtra por event_time en [desde, hasta)
 # (sustituid las fechas: el caliente son los últimos 30 días)
@@ -291,6 +296,7 @@ la página. Solo usa las rutas de siempre; no tiene lógica propia.
 
 | Pestaña | Rutas que usa | Qué probar | Tiene que salir |
 |---|---|---|---|
+| **En vivo** | `/ingesta` | Abrirla con el perfil `stream` levantado; meter un viaje con `anadir_viaje.py` (7.1, 7.2); parar y arrancar el consumidor | Ritmo en torno a 200/s, último viaje llegado hace < 2 s y retraso **al día**. El viaje metido, en «Metido a mano» con su destino. Con el consumidor parado: barras a cero y **parado**; al arrancarlo, un pico de llegadas y el retraso sube y vuelve a ~0 |
 | **Inicio** | `/stats`, `/lifecycle/*`, `/metrics/coste`, `/metrics/calidad` | Abrirla | El recorrido entrada → caliente → frío → borrado con las filas de cada tier, cumplimiento **OK** y el frío ocupando varias veces menos por fila |
 | **Viajes** | `/trips` | Rango rápido «Cruzando la frontera» | Origen **mixto**, la barra de tramos con frío y caliente tocándose a las 00:00, el histograma en dos colores y cada viaje con su etiqueta de tier |
 | **Ciclo de vida** | `/lifecycle/policy` (GET y PUT), `/lifecycle/status` | «Demo: 5 minutos» (pide confirmación) | «N particiones pasan a estar pendientes»; en ≤ 5 min la máquina de estados las mueve a `DESALOJADO` sola (se refresca cada 5 s). **Al acabar, «Volver a 30 días»** |
@@ -402,7 +408,9 @@ dónde ha acabado y por qué:
 | `--importe 20000` | **Cuarentena**: `importe_excesivo` |
 | `--zona-origen 999` | **Cuarentena**: `zona_fuera_de_rango` |
 
-Dónde se ve: el propio script imprime la consulta para verlo; en
+Dónde se ve: en el panel «Metido a mano» de la pestaña **En vivo** del
+frontend (si ha ido al caliente o a cuarentena, y por qué); el propio script
+imprime la consulta para verlo; en
 `curl -s "localhost:8000/trips?desde=<hace 5 min>&hasta=<dentro de 1 min>"`
 (las fechas en UTC, p. ej. `2026-09-28T12:25:00`), con `origen = manual`; y los
 rechazados, en `/metrics/calidad` y en la fila 4 de Grafana. Las reglas están
@@ -424,7 +432,8 @@ echo 'esto no es json' | docker compose exec -T kafka \
   /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic trips.raw
 ```
 
-Dónde se ve: `docker compose logs --tail 2 consumidor` cuenta uno más en
+Dónde se ve: panel «Metido a mano» de la pestaña **En vivo**, o
+`docker compose logs --tail 2 consumidor`, que cuenta uno más en
 caliente y uno más en cuarentena (tarda hasta 10 s en escribir el log). El
 segundo acaba en `trips_cuarentena` con el motivo `mensaje_ilegible` y el texto
 tal cual en `payload`.
@@ -690,37 +699,55 @@ Y antes de darle a grabar:
   el día y se mueven las particiones y la frontera a mitad de vídeo.
 - [ ] Unas cuantas consultas a `/trips` de los tres tipos (pestaña Viajes),
   para que la fila 3 de Grafana (latencias) tenga datos.
-- [ ] Pestañas abiertas: frontend (`localhost:8000/app/`), Grafana (dashboard
-  «E8 · Ciclo de vida de los datos»), Airflow y, si sale, el chat
-  (`localhost:8501`). Un terminal con `source .venv/bin/activate` y el alias
-  `pg` del paso 5.
+- [ ] Pestañas abiertas: frontend en **En vivo**
+  (`localhost:8000/app/#/envivo`), Grafana (dashboard «E8 · Ciclo de vida de
+  los datos»), Airflow, MinIO y, si sale, el chat (`localhost:8501`). Docker
+  Desktop en *Containers*. Un terminal con `source .venv/bin/activate` para la
+  escena 3.
+- [ ] Si la base es de antes de la pestaña **En vivo**, aplicad
+  `postgres/init/08_p3.sql` (ver
+  [Poner al día una base existente](#poner-al-día-una-base-existente)). Con el
+  `down -v` del punto 1 ya entra solo.
 
 ### 9.2 Durante la grabación
+
+Todo se enseña **en el navegador**. El terminal solo sale en la escena 3 (dos
+comandos para mandar mensajes a Kafka) y, si no tenéis Docker Desktop, en la
+4. La tabla de abajo dice qué se usa en cada escena.
+
+| Dónde | Para qué |
+|---|---|
+| **Frontend** · `localhost:8000/app/` | Casi todo: Inicio, **En vivo**, Viajes, Ciclo de vida, Métricas |
+| **Grafana** · `localhost:3000` | El dashboard: política, migración, coste, latencia y calidad |
+| **Airflow** · `localhost:8080` | Pausar, reanudar y lanzar el DAG `archivar` |
+| **MinIO** · `localhost:9001` | Los Parquet del frío apareciendo tras la migración |
+| **Docker Desktop** → *Containers* | Parar y arrancar el consumidor (escena 4) |
+| **Chat** · `localhost:8501` | El asistente (escena 6) |
 
 Las escenas van en este orden por un motivo: **la migración (escena 7) no se
 puede deshacer**, así que va al final. Si una toma de las escenas 1-6 sale
 mal, se repite sin más.
 
-**Escena 1 · El sistema y la política.** Frontend → **Inicio**: el recorrido
-entrada → caliente → frío → borrado, con las filas de cada tier, el
-cumplimiento en **OK** y el frío ocupando varias veces menos por fila. En
-Grafana, la fila 0: umbral de 30 días y custodia de 7 años.
+**Escena 1 · El sistema y la política.**
+- Frontend → **Inicio**: el recorrido entrada → caliente → frío → borrado,
+  con las filas de cada tier, el cumplimiento en **OK** y el frío ocupando
+  varias veces menos por fila.
+- Grafana, fila 0: umbral de 30 días, custodia de 7 años y cumplimiento **OK**.
 
-**Escena 2 · Ingesta en tiempo real.** En el terminal:
+**Escena 2 · Ingesta en tiempo real.** Frontend → **En vivo** (se actualiza
+cada 2 s):
+- «Ritmo ahora» en torno a lo que emite el simulador (50/s si lo habéis
+  bajado), «Último viaje llegó hace» en menos de un par de segundos y
+  **llegando**, y el retraso **al día**.
+- La gráfica «Llegadas» avanzando, con la franja gris de lo que va a
+  cuarentena encima del caliente.
+- «Últimos viajes llegados» cambiando con cada refresco: la hora de llegada y
+  la del evento son casi la misma.
+- Frontend → **Viajes** → rango rápido **«Última hora»**: origen `hot`, con
+  viajes de hace segundos. Grafana, fila 1: el área del caliente sube.
 
-```bash
-docker compose logs --tail 3 simulador      # "N emitidos", N subiendo
-docker compose logs --tail 3 consumidor     # "N recibidos → X en caliente, Y en cuarentena, 0 duplicados"
-pg "SELECT origen, count(*) FROM taxi_trips GROUP BY 1;"     # dos veces: 'stream' sube, 'carga_inicial' no
-pg "SELECT max(event_time), NOW() FROM taxi_trips WHERE origen='stream';"   # segundos de diferencia
-```
-
-Frontend → **Viajes** → rango rápido **«Última hora»**: origen `hot`, con
-viajes de hace segundos. Volver a consultar: hay más. En Grafana, fila 1: el
-área del caliente sube.
-
-**Escena 3 · Calidad de datos.** Mandar a mano un viaje bueno y un mensaje
-roto por Kafka:
+**Escena 3 · Calidad de datos.** Con **En vivo** a la vista, mandar a mano por
+Kafka un viaje bueno y un mensaje roto (es lo único que se hace por terminal):
 
 ```bash
 python scripts/anadir_viaje.py --json --distancia 7 --importe 31 | \
@@ -728,28 +755,36 @@ python scripts/anadir_viaje.py --json --distancia 7 --importe 31 | \
   --bootstrap-server localhost:9092 --topic trips.raw
 echo 'esto no es json' | docker compose exec -T kafka \
   /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic trips.raw
-docker compose logs --tail 2 consumidor     # uno más en caliente y uno más en cuarentena (hasta 10 s)
 ```
 
-Después, fila 4 de Grafana o `pg "SELECT * FROM v_calidad;"`: aparece
-`mensaje_ilegible` junto con la suciedad que mete el simulador. Lo sucio va a
-cuarentena, nunca al caliente.
+- En unos segundos los dos salen en el panel **«Metido a mano»**: el viaje,
+  en **caliente**; el mensaje roto, en **cuarentena** con `mensaje_ilegible` y
+  el texto tal cual llegó. Ese panel guarda lo de la última hora, así que no
+  se pierde entre los viajes del simulador. Probad también algo que el
+  contrato rechace, p. ej. `--distancia 600` (`distancia_excesiva`).
+- Frontend → **Métricas** → «Calidad de los datos», o Grafana, fila 4: los
+  motivos de rechazo, con `mensaje_ilegible` junto a la suciedad que mete el
+  simulador. Lo sucio va a cuarentena, nunca al caliente.
 
-**Escena 4 · Resiliencia.** Se cae el consumidor y no se pierde nada:
+**Escena 4 · Resiliencia.** Con **En vivo** a la vista, ventana **«1 min»**:
 
-```bash
-alias lag='docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 --describe --group pids-consumidor'
-lag                                  # LAG cerca de 0
-docker compose stop consumidor       # el simulador sigue emitiendo a Kafka
-lag                                  # ~30 s después: el LAG ha crecido
-docker compose start consumidor
-lag                                  # vuelve a ~0
-docker compose logs --tail 3 consumidor     # sigue en "0 duplicados"
-```
+1. Docker Desktop → *Containers* → `pids_consumidor` → **Stop** (o
+   `docker compose stop consumidor`). El simulador sigue mandando a Kafka.
+2. En **En vivo**: las barras se quedan a cero, «Último viaje llegó hace»
+   sube y pasa a **parado**. Esperad unos 30 s.
+3. Docker Desktop → `pids_consumidor` → **Start** (o
+   `docker compose start consumidor`).
+4. En **En vivo**: un **pico** de llegadas muy por encima del ritmo normal (el
+   consumidor se pone al día con lo que guardó Kafka) y la gráfica «Retraso»
+   sube a unos 30 s y baja a ~0 en pocos segundos. Después todo vuelve al
+   ritmo de siempre.
 
-Qué explicar: Kafka guarda los mensajes mientras el consumidor está caído; el
-offset se confirma después del commit en PostgreSQL y la escritura hace
-`ON CONFLICT DO NOTHING`, así que al volver ni pierde ni duplica.
+Qué explicar: el hueco y el pico juntos suman lo que se emitió, porque Kafka
+guarda los mensajes mientras el consumidor está caído. El offset se confirma
+después del commit en PostgreSQL y la escritura hace `ON CONFLICT DO NOTHING`,
+así que al volver ni pierde ni duplica. El retraso es el LAG de Kafka medido en
+segundos. Si queréis el número exacto,
+`docker compose logs --tail 3 consumidor` dice `0 duplicados`.
 
 **Escena 5 · El router de tiers.** Frontend → **Viajes**:
 
@@ -757,10 +792,8 @@ offset se confirma después del commit en PostgreSQL y la escritura hace
 2. Un rango de agosto, a mano (p. ej. del 1 al 3) → `cold`.
 3. Rango rápido **«Cruzando la frontera»** → `mixto`: la barra de tramos con
    frío y caliente tocándose a las 00:00 y el histograma en dos colores.
-
-Opcional, para que cuadre a la fila: `docker compose stop simulador` y la
-prueba de [5.6](#56-p3--api) (filas de la API = caliente + frío). Luego
-`docker compose start simulador`.
+4. Frontend → **Métricas** → «Latencia por tier»: el frío más lento que el
+   caliente, los dos dentro de su objetivo.
 
 **Escena 6 · Chatbot** (si sale). En `localhost:8501`:
 
@@ -773,39 +806,37 @@ prueba de [5.6](#56-p3--api) (filas de la API = caliente + frío). Luego
 **Escena 7 · Migración caliente → frío.** El truco es congelar el archivado
 para enseñar que el router sigue a los datos y no a la política:
 
-```bash
-docker compose exec airflow airflow dags pause archivar
-```
+1. Airflow → *Dags* → `archivar` → interruptor en **pausa**.
+2. Frontend → **Ciclo de vida** → **«Demo: 5 minutos»** (pide confirmación):
+   «N particiones pasan a estar pendientes», y la tabla «Pendientes de
+   archivar» se llena.
+3. Grafana, fila 0: cumplimiento en **INCUMPLE** y particiones pendientes > 0.
+4. Frontend → **Viajes** → «Cruzando la frontera» otra vez: **igual que
+   antes**. La política ha cambiado, pero los datos siguen en PostgreSQL y el
+   router los lee de ahí.
+5. Airflow → `archivar` → quitar la pausa y **▶ Trigger**, para no esperar a
+   la pasada de cada 5 min.
+6. Frontend → **Ciclo de vida** (se refresca cada 5 s): la máquina de estados
+   mueve las particiones por `ESCRIBIENDO → ESCRITO → VERIFICADO →
+   DESALOJADO`, de la más antigua a la más reciente. En Airflow, la ejecución
+   en curso; en Grafana, «Máquina de estados».
+7. Al terminar:
+   - Frontend → **Ciclo de vida** → «Historial de archivado»: cada partición
+     en `DESALOJADO`, con «¿Cuadran?» en **sí** (las filas en PostgreSQL =
+     las filas en Iceberg: no se ha perdido ninguna).
+   - MinIO → bucket `lakehouse` → `lakehouse/trips/data/`: los Parquet nuevos
+     del mes actual.
+   - Frontend → **Inicio**: el caliente ha bajado y el frío ha subido lo mismo.
+     Lo de hoy (lo que sigue llegando en **En vivo**) se queda en el caliente:
+     no se archiva hasta mañana.
+   - Grafana, fila 0: cumplimiento de vuelta en **OK**. Fila 1: el área del
+     caliente baja y la del frío sube.
+   - Frontend → **Viajes**: el rango que antes era `mixto` ahora es `cold`;
+     uno de ayer a hoy sale `mixto`, con la frontera a las 00:00 de hoy.
 
-1. Frontend → **Ciclo de vida** → **«Demo: 5 minutos»** (pide confirmación):
-   «N particiones pasan a estar pendientes».
-2. Grafana, fila 0: cumplimiento en **INCUMPLE** y particiones pendientes > 0.
-3. Frontend → Viajes → «Cruzando la frontera» otra vez: **igual que antes**.
-   La política ha cambiado, pero los datos siguen en PostgreSQL y el router los
-   lee de ahí.
-4. Soltar el archivado y lanzarlo ya, sin esperar a la pasada de 5 min:
-
-   ```bash
-   docker compose exec airflow airflow dags unpause archivar
-   docker compose exec airflow airflow dags trigger archivar
-   ```
-
-5. Frontend → Ciclo de vida (se refresca cada 5 s) o Grafana «Máquina de
-   estados»: las particiones pasan por `ESCRIBIENDO → ESCRITO → VERIFICADO →
-   DESALOJADO`, de la más antigua a la más reciente.
-6. Al terminar:
-   - `pg "SELECT estado, count(*), sum(filas_origen) origen, sum(filas_escritas) escritas FROM archival_jobs GROUP BY 1;"`:
-     todo en `DESALOJADO` y `origen = escritas` (no se ha perdido ninguna fila).
-   - Grafana, fila 0: cumplimiento de vuelta en **OK**. Fila 1: el caliente
-     baja y el frío sube lo mismo. Lo de hoy (los viajes del simulador) sigue
-     en el caliente: no se archiva hasta mañana.
-   - Viajes: el rango que antes era `mixto` ahora es `cold`; uno de ayer a hoy
-     sale `mixto`, con la frontera a las 00:00 de hoy.
-   - Grafana, fila 3: el frío con más latencia que el caliente, los dos dentro
-     del SLA.
-
-**Escena 8 · Cierre.** Frontend → Ciclo de vida → **«Volver a 30 días»**:
-`particiones_candidatas_ahora: 0`. Los datos movidos se quedan en el frío.
+**Escena 8 · Cierre.** Frontend → **Ciclo de vida** → **«Volver a 30 días»**:
+0 particiones pendientes y cumplimiento **OK**. Los datos movidos se quedan en
+el frío.
 
 ### 9.3 Después de grabar
 
@@ -815,7 +846,7 @@ docker compose stop simulador                 # que el caliente no siga creciend
 
 - Devolved `SIMULADOR_EVENTOS_POR_SEGUNDO=200` en `.env` si queréis el valor
   por defecto.
-- Comprobad que `archivar` no se ha quedado en pausa (interruptor en Airflow).
+- Comprobad en Airflow que `archivar` no se ha quedado en pausa.
 - **Repetir la escena 7** (o el vídeo entero) obliga a volver a cargar el
   histórico: `python ingesta/carga_inicial.py --recrear` (~1 min) y otra vez
   la política a 30 días. Las escenas 1-6 se pueden repetir sin esto.
@@ -839,6 +870,7 @@ nuevos. Son idempotentes y no borran nada:
 ```bash
 docker compose exec -T postgres psql -U pids -d pids < postgres/init/05_p2.sql
 docker compose exec -T postgres psql -U pids -d pids < postgres/init/07_p4.sql
+docker compose exec -T postgres psql -U pids -d pids < postgres/init/08_p3.sql   # índice de la pestaña En vivo
 docker restart pids_grafana     # para que cargue el datasource y el dashboard
 ```
 

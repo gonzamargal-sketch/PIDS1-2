@@ -64,5 +64,6 @@ export const api = {
   cambiarPolitica: (umbral_valor, umbral_unidad, accion = "ARCHIVE") =>
     llamar("PUT", "/lifecycle/policy?" + qs({ accion }), { umbral_valor, umbral_unidad }),
   estado: () => llamar("GET", "/lifecycle/status"),
+  ingesta: (ventana, paso, opciones) => llamar("GET", "/ingesta?" + qs({ ventana, paso }), undefined, opciones),
   metrica: (nombre) => llamar("GET", `/metrics/${encodeURIComponent(nombre)}`),
 };
