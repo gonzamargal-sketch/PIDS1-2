@@ -20,6 +20,20 @@ export function montar(vista) {
       <label class="interruptor der"><input type="checkbox" id="auto" checked> Actualizar cada 2 s</label></div>
     <p class="sub">Viajes que <b>llegan ahora</b> del flujo en vivo (simulador → Kafka → consumidor) y de los que se meten a mano. Pasan por el contrato de datos y van al <b>caliente</b> o a <b>cuarentena</b>. Se cuentan por hora de llegada a PostgreSQL. Horas en UTC.</p>
     <div id="mensaje"></div>
+    <div class="rejilla" style="margin-bottom:16px">
+      <section class="panel">
+        <div class="panel-cab"><h2>Simulador</h2><p><code>PUT /simulador</code></p></div>
+        <div class="fila" style="align-items:center"><div id="sim-estado" style="flex:1;min-width:200px"><div class="cargando" style="padding:0;text-align:left">Cargando…</div></div>
+          <button type="button" id="sim-boton" disabled>…</button></div>
+        <p class="muted" style="margin:10px 0 0;font-size:13px">Apagado deja de emitir sin parar el contenedor; tarda como mucho un segundo en notarse.</p>
+      </section>
+      <section class="panel">
+        <div class="panel-cab"><h2>Viajes de ejemplo</h2><p><code>POST /ingesta/muestras</code></p></div>
+        <div class="fila" style="align-items:center"><p style="margin:0;flex:1;min-width:200px">Mete 8 viajes, uno por cada salida del contrato de datos: normales, con aviso, rechazados y un mensaje que no es JSON.</p>
+          <button type="button" id="muestras">Meter muestras</button></div>
+        <div id="muestras-res" style="margin-top:10px"></div>
+      </section>
+    </div>
     <div class="cards" id="cards"><div class="cargando">Cargando…</div></div>
     <section class="panel">
       <div class="panel-cab"><h2>Llegadas</h2><p id="sub-serie"></p>
@@ -42,7 +56,59 @@ export function montar(vista) {
   let temporizador = null;
   let primera = true;
 
+  async function cargarSimulador() {
+    try {
+      pintarSimulador((await api.simulador({ apuntar: false })).data);
+    } catch (e) {
+      q("sim-estado").innerHTML = error(e);
+      q("sim-boton").disabled = true;
+    }
+  }
+
+  function pintarSimulador(s) {
+    const boton = q("sim-boton");
+    if (!s.levantado) {
+      q("sim-estado").innerHTML = `${chipEstado("mal", "no levantado")}<div class="muted" style="font-size:13px;margin-top:4px">Levantad el perfil <code>stream</code>: <code>docker compose --profile core --profile stream up -d</code></div>`;
+      boton.disabled = true;
+      boton.textContent = "Encender";
+      return;
+    }
+    q("sim-estado").innerHTML = (s.activo ? chipEstado("ok", "encendido") : chipEstado("aviso", "apagado")) +
+      `<div class="muted" style="font-size:13px;margin-top:4px">${fmtNum(s.eps)} viajes/s por ${esc(s.sumidero)} · ${fmtNum(s.emitidos)} emitidos desde que arrancó</div>`;
+    boton.disabled = false;
+    boton.dataset.activo = s.activo ? "1" : "";
+    boton.textContent = s.activo ? "Apagar" : "Encender";
+    boton.classList.toggle("sec", s.activo);
+  }
+
+  q("sim-boton").onclick = async () => {
+    const boton = q("sim-boton");
+    boton.disabled = true;
+    try {
+      pintarSimulador((await api.cambiarSimulador(!boton.dataset.activo)).data);
+    } catch (e) {
+      q("sim-estado").innerHTML = error(e);
+    }
+  };
+
+  q("muestras").onclick = async () => {
+    const boton = q("muestras");
+    boton.disabled = true;
+    q("muestras-res").innerHTML = '<div class="cargando" style="padding:0;text-align:left">Metiendo…</div>';
+    try {
+      const d = (await api.muestras()).data;
+      const motivos = [...new Set(d.muestras.flatMap((m) => m.motivos || []))];
+      q("muestras-res").innerHTML = mensaje("ok", `<b>${fmtNum(d.caliente)}</b> al caliente y <b>${fmtNum(d.cuarentena)}</b> a cuarentena (${motivos.map((m) => `<code>${esc(m)}</code>`).join(" ")}). El detalle, abajo en «Metido a mano».`);
+      cargar();
+    } catch (e) {
+      q("muestras-res").innerHTML = error(e);
+    } finally {
+      boton.disabled = false;
+    }
+  };
+
   async function cargar() {
+    cargarSimulador();
     try {
       // Solo la primera llamada va al registro del Explorador: el refresco lo llenaría
       const r = await api.ingesta(ventana, paso, { apuntar: primera });

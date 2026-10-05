@@ -39,3 +39,24 @@ CREATE INDEX IF NOT EXISTS idx_cuarentena_a_mano ON trips_cuarentena (recibido_e
     WHERE origen = 'manual'
        OR payload->>'fichero_origen' = 'anadir_viaje.py'
        OR motivos @> ARRAY['mensaje_ilegible'];
+
+
+-- ════════════════════════════════════════════════════════════
+-- ENCENDER Y APAGAR EL SIMULADOR DESDE EL FRONTEND
+-- Una sola fila. El botón de la pestaña En vivo cambia `activo` (PUT
+-- /simulador) y el simulador lo mira cada segundo: apagado deja de emitir
+-- sin que se pare el contenedor. Así la API no necesita acceso a Docker.
+-- El simulador deja aquí un latido con lo que lleva emitido: si el latido
+-- es viejo, el contenedor no está levantado (perfil stream).
+-- ════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS simulador_control (
+    id              SMALLINT    PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    activo          BOOLEAN     NOT NULL DEFAULT TRUE,
+    cambiado_en     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    latido          TIMESTAMPTZ,
+    emitidos        BIGINT,
+    eps             NUMERIC(10,1),
+    sumidero        TEXT
+);
+
+INSERT INTO simulador_control (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
