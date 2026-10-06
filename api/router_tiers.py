@@ -14,7 +14,7 @@ LA FRONTERA SALE DE DÓNDE ESTÁN LOS DATOS, NO DEL UMBRAL
         en (NOW() - umbral)::DATE), así que las filas del día de la
         frontera anteriores a esa hora seguían en PostgreSQL y el router
         las pedía a Iceberg: no salían en ninguna consulta;
-      - en el vídeo, tras bajar el umbral a 5 minutos con el PUT, el
+      - en la demo, tras bajar el umbral a 5 minutos con el PUT, el
         router mandaba al frío días que el DAG aún no había movido (y el
         de hoy no se mueve hasta mañana), y /trips salía vacío.
 
@@ -33,7 +33,7 @@ LA FRONTERA SALE DE DÓNDE ESTÁN LOS DATOS, NO DEL UMBRAL
     posteriores ya estén en el frío: el plan puede tener más de un tramo
     de cada tier.
 
-    Sigue sin cachearse nada: tras el PUT del vídeo, en cuanto el DAG
+    Sigue sin cachearse nada: tras el PUT de la demo, en cuanto el DAG
     desaloja una partición, la siguiente consulta ya la pide a Iceberg.
 
 SE CORTA POR event_time, NUNCA POR tpep_pickup_datetime

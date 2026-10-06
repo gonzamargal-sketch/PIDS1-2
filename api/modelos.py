@@ -57,8 +57,8 @@ class PoliticaRetencion(BaseModel):
 class PoliticaUpdate(BaseModel):
     """Body del PUT /lifecycle/policy.
 
-    Solo se toca el umbral: es lo que se cambia en directo en el vídeo
-    (§10, minuto 2:30) para disparar el archivado sin redesplegar nada.
+    Solo se toca el umbral: es lo que se cambia en directo en la demo
+    para disparar el archivado sin redesplegar nada.
     La validación de la unidad refleja el CHECK de la tabla en
     postgres/init/01_esquema.sql.
     """

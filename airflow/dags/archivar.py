@@ -9,7 +9,7 @@ le pone reintentos y lo hace visible.
 La política se lee de retention_policy en cada ejecución, así que bajar
 el umbral con PUT /lifecycle/policy basta para que la siguiente pasada
 mueva particiones: sin redesplegar ni tocar este fichero. Corre cada
-cinco minutos para que en el vídeo el cambio se vea enseguida. Si no hay
+cinco minutos para que en la demo el cambio se vea enseguida. Si no hay
 candidatas, el job no hace nada; y como es idempotente, un reintento a
 mitad de mudanza retoma desde el estado guardado en archival_jobs.
 

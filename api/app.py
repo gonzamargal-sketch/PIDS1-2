@@ -1,14 +1,9 @@
 """
 PIDS Parte 2 — API de acceso a los tiers.
 
-Esqueleto del paso 0 (A1): solo /health, para que el perfil core levante
-verde desde el primer día. A partir de aquí el fichero es de P3 (T3.1),
-que monta las dependencias, la instrumentación de query_log y registra
-los routers.
-
-A PARTIR DE ESTE COMMIT NADIE MÁS EDITA ESTE FICHERO (regla de T3.1 en
-docs/TAREAS.md): T3.2 y T3.3 solo tocan sus propios módulos de rutas y
-se registran aquí una única vez, lo que les permite ir en paralelo.
+Monta la aplicación: /health, las dependencias, la instrumentación de
+query_log y el registro de los routers. Cada grupo de rutas vive en su
+propio módulo (rutas_*.py) y se registra aquí una única vez.
 """
 
 from __future__ import annotations

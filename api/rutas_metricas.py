@@ -3,7 +3,7 @@ PIDS Parte 2 — API · Rutas de /metrics (P3, T3.3).
 
 Sirve por HTTP las vistas de métricas de §7. Grafana lee PostgreSQL
 directamente (T4.4), así que este endpoint no es para los dashboards:
-es para poder enseñar los números en el vídeo sin abrir un psql, y para
+es para poder enseñar los números sin abrir un psql, y para
 que cualquiera compruebe una métrica desde el navegador.
 """
 
@@ -29,7 +29,7 @@ VISTAS = {
     "latencia_por_tier": "v_latencia_por_tier",
     "calidad": "v_calidad",
     "metricas_caliente": "v_metricas_caliente",
-    # Alias cómodos para el vídeo
+    # Alias cortos
     "coste": "v_coste_por_tier",
     "latencia": "v_latencia_por_tier",
     "caliente": "v_metricas_caliente",

@@ -1,31 +1,10 @@
 # Guía de funcionamiento
 
 Cómo levantar el proyecto completo, cargar los datos, comprobar que todo
-funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
-grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
-algo.
-
-> **Última actualización:** 2026-10-05 · Botones en la pestaña **En vivo**:
-> encender y apagar el simulador y meter viajes de ejemplo
-> ([5.8](#58-frontend-web-p3)). Guion del vídeo de 60-90 s y cómo montarlo en
-> Recordly ([paso 9](#9-guion-del-vídeo-60-90-s)). Antes: chatbot de la Parte 3 (perfil
-> `chat`, [paso 8](#8-chatbot-parte-3)) y frontend web de la API en
-> `localhost:8000/app/` ([5.8](#58-frontend-web-p3)). El
-> [paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
-> funciona; el [paso 7](#7-qué-podéis-hacer-vosotros-tocar-el-sistema), para
-> **tocarlo**: meter viajes, cambiar la política, mover datos y provocar fallos.
-
----
-
-## Estado actual
-
-| Bloque | Qué hace | Estado |
-|---|---|---|
-| **P1** · Almacenamiento y ciclo de vida | Job de archivado caliente→frío, purga del frío, carga inicial | ✅ en `main` |
-| **P2** · Ingesta | Simulador con jitter, Kafka, consumidor → caliente + cuarentena | ✅ en `main` |
-| **P3** · Acceso | API: `/trips` con router de tiers, métricas, `/lifecycle/*` | ✅ en `main` |
-| **P4** · Orquestación y observabilidad | 4 DAGs de Airflow, dashboard de Grafana | ✅ en `main` |
-| **Parte 3** · Chatbot | Streamlit → FastAPI → OpenRouter con herramientas sobre la API; ruta `/trips/resumen` | 🔶 rama `parte3/chatbot` |
+funciona y ver el ciclo de vida de E8 en marcha. El
+[paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
+funciona; el [paso 7](#7-tocar-el-sistema), para **tocarlo**: meter viajes,
+cambiar la política, mover datos y provocar fallos.
 
 **Datos de trabajo:** de 2026, del 1 de enero hasta *ahora*, nunca en el
 futuro. La muestra real (`datos/muestra_1000.csv`) es la semilla; el volumen lo
@@ -60,7 +39,7 @@ docker compose ps                             # esperar a que todo esté "health
 
 - `down -v` borra los volúmenes: base de datos, MinIO, Airflow y Grafana. Es
   lo que garantiza que se ejecutan **todos** los SQL de `postgres/init/`,
-  incluidos los de P2 y P4. Si no queréis perder datos, ver
+  incluidos los añadidos después del esquema inicial. Si no queréis perder datos, ver
   [Poner al día una base existente](#poner-al-día-una-base-existente).
 - Perfiles: `core` = PostgreSQL + MinIO + API · `orch` = Airflow ·
   `viz` = Grafana · `stream` = Kafka + consumidor + simulador (paso 4).
@@ -117,7 +96,7 @@ cuarentena. Cada viaje "acaba de terminar": `event_time` y la fecha del viaje
 son de ahora.
 
 Para parar solo el simulador: botón **Apagar** en la pestaña **En vivo** del
-frontend ([5.8](#58-frontend-web-p3)), o `docker compose stop simulador`.
+frontend ([5.8](#58-frontend-web)), o `docker compose stop simulador`.
 
 ---
 
@@ -138,10 +117,10 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 
 | Dónde | Acceso | Qué es |
 |---|---|---|
-| **Airflow** · http://localhost:8080 | sin login | Los 4 DAGs de P4 |
+| **Airflow** · http://localhost:8080 | sin login | Los 4 DAGs |
 | **Grafana** · http://localhost:3000 | `admin` / `admin` | Dashboard «E8 · Ciclo de vida de los datos» (se refresca cada 30 s) |
 | **MinIO** · http://localhost:9001 | `minioadmin` / `minioadmin_dev_2026` | Buckets `bronze` (CSV crudos) y `lakehouse` (Parquet de Iceberg) |
-| **Frontend** · http://localhost:8000/app/ | — | La API con interfaz: recorrido de un dato, ingesta en vivo, viajes por rango, política y archivado en directo, métricas y explorador de rutas ([5.8](#58-frontend-web-p3)) |
+| **Frontend** · http://localhost:8000/app/ | — | La API con interfaz: recorrido de un dato, ingesta en vivo, viajes por rango, política y archivado en directo, métricas y explorador de rutas ([5.8](#58-frontend-web)) |
 | **API** · http://localhost:8000/docs | — | Swagger: todos los endpoints, con botón *Try it out* |
 | **Chatbot** · http://localhost:8501 | — | Asistente de la Parte 3 (perfil `chat`, [paso 8](#8-chatbot-parte-3)) |
 
@@ -153,7 +132,7 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 | `curl -s localhost:8000/health` | `{"estado":"ok"}` |
 | `pg "SELECT count(*) FROM taxi_trips_default;"` | `0`. Si hay filas, llegaron datos de días sin partición: ver *Problemas frecuentes* del README |
 
-### 5.2 P1 · Almacenamiento y carga
+### 5.2 Almacenamiento y carga
 
 | Ejecutar / tocar | Tiene que salir |
 |---|---|
@@ -167,7 +146,7 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 | `pg "SELECT * FROM v_coste_por_tier;"` | PostgreSQL ocupa **varias veces más** por fila que Iceberg (~320-550 B frente a ~55 B) |
 | `pg "SELECT * FROM v_cumplimiento_politica;"` | `estado = OK`: nada en el caliente más viejo que el umbral |
 
-### 5.3 P2 · Ingesta en vivo (perfil `stream`, paso 4)
+### 5.3 Ingesta en vivo (perfil `stream`, paso 4)
 
 | Ejecutar / tocar | Tiene que salir |
 |---|---|
@@ -197,7 +176,7 @@ Para parar solo el simulador: botón **Apagar** de la pestaña En vivo, o
 `docker compose stop simulador`. El contador de
 `stream` deja de subir.
 
-### 5.4 P4 · Orquestación (Airflow)
+### 5.4 Orquestación (Airflow)
 
 | Ejecutar / tocar | Tiene que salir |
 |---|---|
@@ -209,7 +188,7 @@ Para parar solo el simulador: botón **Apagar** de la pestaña En vivo, o
 | DAG `purga_final` | En verde (diario). Con la política de 7 años no borra nada |
 | `pg "SELECT medido_en, filas FROM hot_stats ORDER BY id DESC LIMIT 1;"` | `medido_en` de hace menos de 5 min: las estadísticas se están refrescando |
 
-### 5.5 P4 · Grafana
+### 5.5 Grafana
 
 Dashboard «E8 · Ciclo de vida de los datos». Qué tiene que verse en cada fila:
 
@@ -224,7 +203,7 @@ Dashboard «E8 · Ciclo de vida de los datos». Qué tiene que verse en cada fil
 Si la fila 3 está vacía, haced unas cuantas llamadas a `/trips` (5.6) y
 esperad al siguiente refresco.
 
-### 5.6 P3 · API
+### 5.6 API
 
 | Ejecutar / tocar | Tiene que salir |
 |---|---|
@@ -254,9 +233,9 @@ Tiene que salir: las filas de la API = caliente + frío. Con el flujo en vivo
 encendido, parad antes el simulador, que si no el caliente cambia entre una
 consulta y otra.
 
-### 5.7 Referencia rápida de la API (P3)
+### 5.7 Referencia rápida de la API
 
-**Para verlo sin curl:** el frontend ([5.8](#58-frontend-web-p3)).
+**Para verlo sin curl:** el frontend ([5.8](#58-frontend-web)).
 
 **Las únicas rutas que escriben viajes** son las de los botones de En vivo:
 `POST /ingesta/muestras` (8 viajes de ejemplo, por el mismo contrato de
@@ -296,7 +275,7 @@ Referencia de la prueba en instalación limpia (3M de filas; con 1M, todo en
 proporción): Kafka 35.800 emitidos = 35.800 recibidos; una fila ocupa
 **~320 B en PostgreSQL y ~54 B en Iceberg** (unas 6 veces menos).
 
-### 5.8 Frontend web (P3)
+### 5.8 Frontend web
 
 http://localhost:8000/app/ (también `localhost:8000/`, que redirige). Es
 HTML + JS sin compilar en `api/web/`, servido por la propia API: no hay que
@@ -352,8 +331,7 @@ curl -s -X PUT localhost:8000/lifecycle/policy \
 
 > ⚠️ **La demo no se deshace.** Volver a poner 30 días no devuelve los datos
 > al caliente: se quedan en Iceberg. Para repetirla desde cero, volved a hacer
-> el paso 3 (`carga_inicial.py --recrear`). Si vais a grabar el vídeo, haced
-> antes toda la lista del paso 5.
+> el paso 3 (`carga_inicial.py --recrear`).
 
 **Qué tiene que verse en cada momento:**
 
@@ -383,7 +361,7 @@ docker compose exec airflow /opt/pids-venv/bin/python -m archivado.purga --simul
 
 ---
 
-## 7. Qué podéis hacer vosotros (tocar el sistema)
+## 7. Tocar el sistema
 
 El paso 5 es para **mirar**; esto es para **actuar**: meter viajes, cambiar la
 política, mover datos a mano y ver cómo reacciona todo. Cada apartado dice
@@ -562,7 +540,7 @@ docker compose exec airflow airflow dags pause archivar      # deja de pasar
 docker compose exec airflow airflow dags unpause archivar    # vuelve
 ```
 
-Truco para el vídeo: pausar `archivar`, hacer el `PUT` a 5 minutos y enseñar
+Para enseñarlo paso a paso: pausar `archivar`, hacer el `PUT` a 5 minutos y enseñar
 que el cumplimiento sale **INCUMPLE** con particiones pendientes, pero `/trips`
 sigue devolviéndolo todo desde el caliente (el router sigue a los datos, no a
 la política). Después, `unpause` y ver cómo se mueven. **Acordaos del
@@ -580,7 +558,7 @@ la política). Después, `unpause` y ver cómo se mueven. **Acordaos del
 
 Cada consulta a la API queda en `query_log` y alimenta la fila 3 de Grafana:
 hacer varias al frío y al caliente es la forma de llenar la gráfica de
-latencias para el vídeo.
+latencias.
 
 ### 7.9 Provocar fallos
 
@@ -673,153 +651,27 @@ Cada respuesta enseña en «Cómo lo he resuelto» las herramientas, los argumen
 ya validados, el resultado de la API, los tokens, el coste (0 $ con los
 gratuitos) y qué modelo respondió de verdad (el principal o uno de respaldo).
 
----
+**Limitaciones conocidas:**
 
-## 9. Guion del vídeo (60-90 s)
-
-El vídeo dura **entre 1 y 1,5 minutos**, así que no se enseña todo: solo lo
-que demuestra E8 de un vistazo. La forma de conseguirlo es **grabar una toma
-larga** (unos 10 minutos, con las esperas incluidas) y **recortarla en
-Recordly** ([9.4](#94-montaje-en-recordly)): se quitan las esperas y se
-aceleran los tramos lentos.
-
-Se graba **solo la ventana del navegador** (pestañas del frontend y de
-Airflow). Lo que se hace fuera, como parar el consumidor, no sale: en el vídeo
-se ve su efecto.
-
-Se usan **los dos generadores**: el script (`generar_datos_sinteticos.py`)
-monta el **histórico** antes de grabar, y el **simulador** va encendido para
-que se vea la ingesta en vivo. El simulador solo crea viajes de *ahora*.
-
-### 9.1 Escaleta
-
-Lo que queda en el vídeo final. Los tiempos son orientativos; para dejarlo en
-**60 s**, quitad los planos marcados con *(cortable)*.
-
-| Tiempo | Plano | Qué se ve | Voz / texto en pantalla |
-|---|---|---|---|
-| 0:00-0:08 | Frontend · **Inicio** | El recorrido entrada → caliente → frío → borrado, con las filas de cada tier | «Los viajes de taxi entran calientes en PostgreSQL y a los 30 días pasan al frío, en Iceberg» |
-| 0:08-0:20 | **En vivo** | Ritmo, «llegando», la gráfica avanzando; clic en **Meter muestras** y el panel «Metido a mano» con 4 en caliente y 4 en cuarentena, cada uno con su motivo | «Llegan en tiempo real por Kafka. Lo que no cumple el contrato de datos va a cuarentena» |
-| 0:20-0:35 | **En vivo**, ventana «1 min» | Las barras a cero y **parado**; después el pico y el retraso subiendo y bajando | «Si se cae el consumidor, Kafka guarda los mensajes. Al volver se pone al día sin perder ni duplicar» |
-| 0:35-0:47 | **Viajes** · «Cruzando la frontera» *(cortable)* | Origen **mixto**, la barra de tramos y el histograma en dos colores | «Una consulta que cruza la frontera lee de los dos tiers y junta el resultado» |
-| 0:47-0:55 | **Ciclo de vida** · «Demo: 5 minutos» | «N particiones pasan a estar pendientes» | «Bajamos la política a 5 minutos, sin tocar código» |
-| 0:55-1:00 | **Airflow** · `archivar` → ▶ *(cortable)* | La ejecución arrancando | «Airflow ejecuta el archivado» |
-| 1:00-1:15 | **Ciclo de vida** (acelerado) | La máquina de estados llevando las particiones a `DESALOJADO`; el historial con «¿Cuadran?» en **sí** | «Cada partición se copia, se cuenta en los dos lados y solo si cuadra se borra del caliente» |
-| 1:15-1:25 | **Inicio** | El caliente ha bajado y el frío ha subido lo mismo | «Lo reciente, rápido; lo antiguo, barato. Y sin perder una fila» |
-| 1:25-1:30 | **Ciclo de vida** · «Volver a 30 días» *(cortable)* | Cumplimiento **OK** | — |
-
-Unas 2-2,5 palabras por segundo: si la voz no cabe, se recorta el texto, no se
-acelera la imagen.
-
-### 9.2 Antes de grabar
-
-```bash
-# 1. Base limpia con el histórico (pasos 1 y 3)
-docker compose --profile "*" down -v
-docker compose --profile core --profile orch --profile viz up -d
-python scripts/generar_datos_sinteticos.py 1000000 --seed 42
-python ingesta/subir_bronze.py --origen datos/sinteticos
-python ingesta/carga_inicial.py --recrear
-
-# 2. Simulador más lento: en .env, SIMULADOR_EVENTOS_POR_SEGUNDO=50
-# 3. Flujo en vivo
-docker compose --profile core --profile stream --profile orch --profile viz up -d
-```
-
-Y justo antes de grabar:
-
-- [ ] La lista del [paso 5](#5-comprobar-que-todo-funciona) en verde y
-  `pg "SELECT count(*) FROM taxi_trips_default;"` a `0` (si no, DAG
-  `mantener_particiones` → ▶).
-- [ ] **No grabéis cerca de las 02:00 hora española** (medianoche UTC): cambia
-  el día y se mueven las particiones a mitad de toma.
-- [ ] En **En vivo**, el simulador **encendido**. «Metido a mano» se llena en
-  la toma con el botón **Meter muestras**.
-
-- [ ] **Pausar `archivar`** en Airflow, para que no se adelante a la toma.
-- [ ] Navegador: ventana a **1920×1080**, zoom **125 %** (que se lean los
-  números en un vídeo pequeño), sin barra de marcadores y con dos pestañas:
-  el frontend en **Inicio** y Airflow en el DAG `archivar`. Cerrad lo demás.
-- [ ] Docker Desktop abierto en *Containers*, fuera de la ventana grabada.
-
-### 9.3 La toma (unos 10 min, todo seguido)
-
-No pasa nada por ir despacio o repetir un clic: en el montaje se corta. Dejad
-**2-3 segundos quietos** en cada plano, que es lo que luego se usa.
-
-1. **Inicio**: pasad el ratón por los tres tiers.
-2. **En vivo**: dejadla correr unos segundos. Pulsad **Meter muestras** y
-   bajad hasta «Metido a mano».
-3. **En vivo** → ventana **«1 min»**. En Docker Desktop, **Stop** en
-   `pids_consumidor`. Esperad a que salga **parado** (~30 s). **Start**.
-   Esperad a que pase el pico y el retraso vuelva a ~0.
-4. **Viajes** → «Cruzando la frontera». Pasad el ratón por la barra de tramos.
-5. **Ciclo de vida** → «Demo: 5 minutos» → aceptar.
-6. Pestaña de **Airflow** → `archivar`: quitar la pausa y **▶ Trigger**.
-7. Vuelta al frontend → **Ciclo de vida**. Esperad sin tocar a que todo esté
-   en `DESALOJADO` (unos minutos). Bajad a «Historial de archivado».
-8. **Inicio**.
-9. **Ciclo de vida** → «Volver a 30 días».
-
-Si algo sale mal en los pasos 1-4, se repite ahí mismo. Si sale mal del 5 en
-adelante, hay que recargar el histórico ([9.5](#95-después-de-grabar)).
-
-### 9.4 Montaje en Recordly
-
-[Recordly](https://github.com/webadderallorg/Recordly) es gratuito y de código
-abierto: graba la pantalla y abre la grabación en un editor con línea de
-tiempo, zoom automático y exportación a MP4. En WSL se usa la **versión de
-Windows**: el navegador que graba es el de Windows, y `localhost` llega a los
-contenedores de WSL igualmente.
-
-**Instalar:** en [Releases](https://github.com/webadderallorg/Recordly/releases)
-bajad `Recordly-windows-x64.exe` (pide Windows 10 build 19041 o posterior) e
-instaladlo. Si Windows avisa de que es una aplicación desconocida: *Más
-información* → *Ejecutar de todas formas*.
-
-**Grabar:**
-1. Abrir Recordly → elegir la **ventana** del navegador (no la pantalla
-   entera: así no sale Docker Desktop ni las notificaciones).
-2. Audio: **sin micrófono y sin audio del sistema**. La voz se graba después,
-   sobre el montaje, porque la toma dura 10 minutos y el vídeo 90 s.
-3. Grabar → hacer la toma de [9.3](#93-la-toma-unos-10-min-todo-seguido) →
-   parar. Al parar se abre el editor solo.
-4. Guardad el proyecto (`.recordly`) antes de editar: se puede reabrir con
-   todo lo hecho.
-
-**Editar** (siguiendo la [escaleta](#91-escaleta)):
-- **Recortar** las esperas: lo que hay entre parar y arrancar el consumidor
-  (se queda el «parado» y el pico), los clics de más, y los minutos de la
-  máquina de estados.
-- **Acelerar** (región de velocidad) lo que no se puede cortar porque se ve
-  avanzar: la máquina de estados, a x8-x16 hasta que quepa en unos 10 s.
-- **Zoom**: aceptad las sugerencias automáticas (siguen al ratón) y añadid a
-  mano las de las tarjetas de **En vivo**, el panel «Metido a mano» y
-  «¿Cuadran? sí».
-- **Textos** (anotaciones de texto) con las frases de la escaleta, si no hay
-  voz, o como apoyo si la hay. Recordly también genera subtítulos
-  automáticos.
-- **Cursor**: tamaño algo mayor y suavizado, para que se siga bien.
-- **Fondo y marco**: un fondo liso, algo de margen y esquinas redondeadas.
-  Formato **16:9**.
-- **Voz**: grabadla aparte con la escaleta delante (cualquier grabadora del
-  móvil o del PC vale) y añadidla como región de audio en la línea de tiempo.
-
-**Exportar:** MP4, calidad alta, 1920×1080. Mirad la duración antes: entre
-1:00 y 1:30.
-
-### 9.5 Después de grabar
-
-```bash
-docker compose stop simulador                 # que el caliente no siga creciendo (o «Apagar» en En vivo)
-```
-
-- Devolved `SIMULADOR_EVENTOS_POR_SEGUNDO=200` en `.env` si queréis el valor
-  por defecto.
-- Comprobad en Airflow que `archivar` no se ha quedado en pausa.
-- **Repetir la toma desde el paso 5** obliga a volver a cargar el histórico:
-  `python ingesta/carga_inicial.py --recrear` (~1 min), la política a 30 días
-  y `archivar` en pausa otra vez. Los pasos 1-4 se pueden repetir sin esto.
+- **Timeout que supera al de la interfaz.** El presupuesto de 90 s solo se
+  comprueba entre vueltas; con 30 s por llamada al modelo y un reintento
+  (`max_retries=1`), una pregunta de varias vueltas pasa de los 150 s que
+  espera Streamlit y sale «el backend no responde» aunque siga trabajando.
+  Arreglo: sin reintentos y cada llamada con el tiempo que quede del
+  presupuesto (`chatbot/agente.py`, `chatbot/config.py`).
+- **Respuesta vacía con modelos que razonan.** Si el razonamiento se come
+  los 1.500 tokens, `content` llega vacío y sale «No he podido generar una
+  respuesta». Arreglo: limitar el razonamiento (`reasoning` de OpenRouter) o
+  subir `CHATBOT_MAX_TOKENS`, y reintentar una vez si llega vacío.
+- **Ajuste de privacidad de OpenRouter.** Si en
+  https://openrouter.ai/settings/privacy no se permite a los proveedores
+  gratuitos usar los prompts, los `:free` dan 404 y el chat dice «el modelo
+  no existe». Hay que permitirlo en esa página.
+- **El modelo principal casi nunca responde.** `qwen3.8-27b:free` y
+  `gemma-4-31b-it:free` devuelven 429 *«temporarily rate-limited upstream»*
+  (saturación del proveedor, no de nuestra clave) y contesta siempre el
+  último respaldo, `nemotron-3-super-120b-a12b:free`. Arreglo: poner nemotron
+  primero y qwen y gemma de respaldo (`chatbot/config.py`, `.env.example`).
 
 ---
 
@@ -847,38 +699,3 @@ docker restart pids_grafana     # para que cargue el datasource y el dashboard
 
 Y para tener los datos de 2026, los pasos 3 y 4.
 
----
-
-## Pendiente
-
-Lo que falta para tener todo E8, en el orden en que se irá añadiendo a esta
-guía:
-
-- [x] **Guion del vídeo**: [paso 9](#9-guion-del-vídeo-60-90-s). Las consultas usan
-  los rangos rápidos del frontend, así que valen el día que se grabe.
-- [ ] **Mediciones (T5.1)**: las seis métricas de §7 con capturas, en
-  `docs/MEDICIONES.md`.
-- [ ] **Memoria (T5.2)** y **vídeo (T5.3)**.
-
-**Chatbot (Parte 3)**, arreglos pendientes:
-
-- [ ] **Timeout que supera al de la interfaz.** El presupuesto de 90 s solo se
-  comprueba entre vueltas; con 30 s por llamada al modelo y un reintento
-  (`max_retries=1`), una pregunta de varias vueltas pasa de los 150 s que
-  espera Streamlit y sale «el backend no responde» aunque siga trabajando.
-  Arreglo: sin reintentos y cada llamada con el tiempo que quede del
-  presupuesto (`chatbot/agente.py`, `chatbot/config.py`).
-- [ ] **Respuesta vacía con modelos que razonan.** Si el razonamiento se come
-  los 1.500 tokens, `content` llega vacío y sale «No he podido generar una
-  respuesta». Arreglo: limitar el razonamiento (`reasoning` de OpenRouter) o
-  subir `CHATBOT_MAX_TOKENS`, y reintentar una vez si llega vacío.
-- [ ] **Ajuste de privacidad de OpenRouter.** Si en
-  https://openrouter.ai/settings/privacy no se permite a los proveedores
-  gratuitos usar los prompts, los `:free` dan 404 y el chat dice «el modelo
-  no existe». Arreglo: mensaje que lo explique y añadirlo al
-  [paso 8](#8-chatbot-parte-3).
-- [ ] **El modelo principal casi nunca responde.** `qwen3.8-27b:free` y
-  `gemma-4-31b-it:free` devuelven 429 *«temporarily rate-limited upstream»*
-  (saturación del proveedor, no de nuestra clave) y contesta siempre el
-  último respaldo, `nemotron-3-super-120b-a12b:free`. Arreglo: poner nemotron
-  primero y qwen y gemma de respaldo (`chatbot/config.py`, `.env.example`).

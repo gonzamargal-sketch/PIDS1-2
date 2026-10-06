@@ -4,7 +4,7 @@ PIDS Parte 2 — API · Rutas de /lifecycle (P3, T3.3).
 /lifecycle/status  — la máquina de estados de §3.2 vista desde fuera.
 /lifecycle/policy  — GET y PUT sobre retention_policy.
 
-El PUT es el momento clave del vídeo (§10, minuto 2:30): baja el umbral a
+El PUT es el momento clave de la demo: baja el umbral a
 5 minutos en directo y el archivado se dispara sin redesplegar nada. Por
 eso la respuesta del PUT incluye cuántas particiones pasan a ser
 candidatas: se ve el efecto en la misma pantalla, sin cambiar de ventana.
@@ -158,7 +158,7 @@ def policy_put(
     dataset: str = Query(DATASET),
     conn: PGConnection = Depends(get_conn),
 ) -> dict:
-    """Cambia el umbral de una política. El momento clave del vídeo.
+    """Cambia el umbral de una política. El momento clave de la demo.
 
     La unidad y el valor los valida ya el modelo (api/modelos.py), que
     refleja los CHECK de la tabla: umbral_valor > 0 y umbral_unidad en
@@ -193,7 +193,7 @@ def policy_put(
 
             # Efecto inmediato de la política recién guardada: lo que
             # empieza a ser candidato acto seguido. Es el criterio de
-            # "hecho cuando" de T3.3, y en el vídeo evita tener que
+            # "hecho cuando" de T3.3, y en la demo evita tener que
             # cambiar de ventana para demostrar que ha surtido efecto.
             cur.execute("SELECT count(*) AS candidatas FROM particiones_a_archivar()")
             candidatas = cur.fetchone()["candidatas"]

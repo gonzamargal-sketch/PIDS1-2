@@ -1,7 +1,7 @@
 """
 PIDS Parte 2 — API · Rutas de /trips (P3, T3.2).
 
-El endpoint que enseña el router en el vídeo (§10, minuto 4:30): una
+El endpoint que enseña el router: una
 consulta solo-caliente (rápida), una solo-fría (lenta) y una que cruza la
 frontera, con su data_source y su coverage.
 """

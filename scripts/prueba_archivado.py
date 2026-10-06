@@ -19,8 +19,8 @@ lanzará Airflow) y PyIceberg de verdad:
     9. Si la verificación no cuadra: ERROR y no se borra nada
 
 Como prueba_humo.py, parte de una base limpia: BORRA las particiones
-diarias, taxi_trips y archival_jobs. No la lancéis en la máquina donde
-tengáis los datos del vídeo. En Iceberg solo toca sus propias filas
+diarias, taxi_trips y archival_jobs. No la lancéis sobre una base con
+datos que queráis conservar. En Iceberg solo toca sus propias filas
 (fichero_origen = 'prueba_archivado') y los cinco días que usa, así que
 el resto del histórico no se pierde. Al terminar restaura la política y
 las particiones de adelanto.

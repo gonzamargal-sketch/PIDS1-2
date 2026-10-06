@@ -15,7 +15,7 @@
 #
 #   docker compose --profile core up -d
 #   docker compose --profile core --profile stream up -d
-#   docker compose --profile "*" up -d        # todo (integración y vídeo)
+#   docker compose --profile "*" up -d        # todo
 #
 # Con 8 GB de RAM hay que configurar %UserProfile%\.wslconfig:
 #   [wsl2]
@@ -79,8 +79,8 @@ services:
   #
   # VERSIÓN FIJADA A PROPÓSITO, no uséis :latest. En RELEASE.2025-05-24
   # ("Breaking Release") quitaron la consola web embebida. Esta es la última
-  # que conserva el navegador de objetos completo, que es lo que se enseña
-  # en el vídeo.
+  # que conserva el navegador de objetos completo, con el que se ven el
+  # bronze y los Parquet del frío.
   minio:
     <<: *comun
     image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z

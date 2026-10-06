@@ -7,41 +7,24 @@ generados a partir de mil viajes reales del portal (ver
 
 **Para levantarlo todo y verlo funcionar, seguid la
 [guía de funcionamiento](docs/GUIA.md)**: comandos en orden, qué comprobar y la
-demo del ciclo de vida. Se mantiene al día según entra cada parte.
-
-Toda la documentación está en [`docs/`](docs/): el diseño en
-[`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md), el reparto por bloques en
-[`docs/REPARTO.md`](docs/REPARTO.md) y las tareas pendientes, ya troceadas para
-poder trabajar los cuatro a la vez, en [`docs/TAREAS.md`](docs/TAREAS.md).
-
-Antes de tocar código, leed al menos las secciones 3.1, 3.2 y 3.3 de la
-arquitectura: condicionan lo que escribe cada uno.
-
-> **Estado actual:** los cuatro bloques (P1 almacenamiento y ciclo de vida,
-> P2 ingesta, P3 API y router, P4 orquestación y Grafana) están **integrados
-> en `main` y probados juntos**. Detalle en
-> [Estado de la integración](#estado-de-la-integración).
+demo del ciclo de vida. El diseño y el porqué de cada decisión están en
+[`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 
 ---
 
-## Fases del proyecto
+## Alcance
 
-**Fase 1 — la que se entrega.** Los datos se reparten solo entre **PostgreSQL**
-(tier caliente) y **MinIO** (bronze y tier frío, consultado con **Iceberg**).
-La ingesta entra por **Kafka** y todas las transformaciones y traspasos entre
-tiers los hace **Airflow**. No hay Redis ni Spark.
-
-**Fase 2 — opcional, en principio no se hace.** Si sobrara tiempo, se añadiría
-**Redis** como capa de caché delante de los otros dos tiers. No está diseñada ni
-planificada: todo lo que describen este README y `docs/ARQUITECTURA.md` es la
-fase 1.
+Los datos se reparten solo entre **PostgreSQL** (tier caliente) y **MinIO**
+(bronze y tier frío, consultado con **Iceberg**). La ingesta entra por
+**Kafka** y todas las transformaciones y traspasos entre tiers los hace
+**Airflow**. No hay Redis ni Spark.
 
 ---
 
 ## Arranque en 3 minutos
 
 ```bash
-git clone <url-del-repo> && cd pids-parte2
+git clone https://github.com/gonzamargal-sketch/PIDS1-2.git pids-parte2 && cd pids-parte2
 cp .env.example .env
 
 docker compose --profile core up -d
@@ -82,14 +65,14 @@ tocar un `.py` no pide rebuild.
 
 ## Perfiles de Docker Compose
 
-Nadie necesita levantarlo todo para trabajar en lo suyo:
+No hace falta levantarlo todo para cada cosa:
 
 ```bash
 docker compose --profile core up -d                     # ~1,3 GB, siempre
 docker compose --profile core --profile stream up -d    # + Kafka, consumidor y simulador
 docker compose --profile core --profile orch up -d      # + Airflow
 docker compose --profile core --profile chat up -d      # + chatbot de la Parte 3 (localhost:8501)
-docker compose --profile "*" up -d                      # todo (integración y vídeo)
+docker compose --profile "*" up -d                      # todo
 ```
 
 **Si tenéis 8 GB de RAM**, configurad `%UserProfile%\.wslconfig` o Docker se
@@ -110,47 +93,44 @@ Luego `wsl --shutdown` desde PowerShell para que tome efecto.
 
 ```
 pids-parte2/
-├── docs/                    ← TODA la documentación vive aquí
+├── docs/
 │   ├── GUIA.md              ·  guía de funcionamiento: comandos, comprobaciones, demo
-│   ├── ARQUITECTURA.md      ·  el documento de diseño. Leerlo primero.
-│   ├── REPARTO.md           ·  qué bloque es de quién
-│   └── TAREAS.md            ·  las tareas pendientes, troceadas y sin solapes
-├── docker-compose.yml       ← con perfiles core/stream/orch/viz
+│   └── ARQUITECTURA.md      ·  el documento de diseño y el porqué de cada decisión
+├── docker-compose.yml       ← con perfiles core/stream/orch/viz/chat
 ├── .env.example             ← copiar a .env
 ├── common/                  ← CONTRATO DE DATOS (compartido por todos)
 │   ├── config.py            ·  variables de entorno en un solo sitio
 │   ├── esquema.py           ·  lectura y normalización del dataset
 │   ├── validacion.py        ·  reglas de calidad (rechazo / aviso)
 │   ├── lakehouse.py         ·  tabla Iceberg: esquema, partición, ZSTD
-│   └── mensajes.py          ·  formato de los mensajes de Kafka (P2)
+│   └── mensajes.py          ·  formato de los mensajes de Kafka
 ├── postgres/init/           ← se ejecuta solo la PRIMERA vez que arranca
 │   ├── 01_esquema.sql       ·  tablas
 │   ├── 02_funciones.sql     ·  particiones, archivado, vistas de métricas
 │   ├── 03_politicas.sql     ·  políticas de retención iniciales
-│   ├── 05_p2.sql            ·  índice de idempotencia de la cuarentena (P2)
-│   └── 07_p4.sql            ·  hot_stats y v_historico_por_tier (P4)
+│   ├── 05_p2.sql            ·  índice de idempotencia de la cuarentena
+│   ├── 07_p4.sql            ·  hot_stats y v_historico_por_tier
+│   └── 08_p3.sql            ·  índices de la pestaña En vivo e interruptor del simulador
 ├── datos/
 │   └── muestra_1000.csv     ← semilla del simulador y fixture de tests
 ├── scripts/
 │   ├── prueba_humo.py              ·  verifica que el esqueleto está sano
-│   ├── prueba_archivado.py         ·  prueba end-to-end del ciclo de vida (P1)
+│   ├── prueba_archivado.py         ·  prueba end-to-end del ciclo de vida
 │   ├── generar_datos_sinteticos.py ·  CSV sintético con el esquema del portal
 │   ├── anadir_viaje.py             ·  mete un viaje a mano por el contrato de datos (GUIA §7)
 │   └── descargar_bronze.py         ·  descarga los 24,6M del portal (opcional)
 ├── ingesta/
 │   ├── subir_bronze.py      ·  paso 4: dataset crudo → MinIO
 │   ├── carga_inicial.py     ·  paso 5: bronze → Iceberg
-│   └── consumidor_kafka.py  ·  paso 7 (P2): Kafka → PostgreSQL + cuarentena
-├── simulador/   (P2)  ✅ replay con jitter; sumideros postgres y kafka
-├── archivado/   (P1)  ✅ job hot→cold (máquina de estados) y purga del frío
-├── airflow/     (P4)  ✅ 4 DAGs: particiones, archivar, estadísticas, purga
-├── grafana/     (P4)  ✅ datasource PostgreSQL y dashboard «E8 · Ciclo de vida»
-└── api/         (P3)  /trips (router de tiers), /stats, /metrics, /lifecycle
+│   └── consumidor_kafka.py  ·  Kafka → PostgreSQL + cuarentena
+├── simulador/               ← replay con jitter; sumideros postgres y kafka
+├── archivado/               ← job hot→cold (máquina de estados) y purga del frío
+├── airflow/                 ← 4 DAGs: particiones, archivar, estadísticas, purga
+├── grafana/                 ← datasource PostgreSQL y dashboard «E8 · Ciclo de vida»
+├── api/                     ← /trips (router de tiers), /stats, /metrics, /lifecycle
+│   └── web/                 ·  frontend en localhost:8000/app/
+└── chatbot/                 ← asistente de la Parte 3 (Streamlit + FastAPI)
 ```
-
-> **Las tareas que faltan, con su dueño y sus ficheros**, están en
-> [`docs/TAREAS.md`](docs/TAREAS.md). Están troceadas para que nadie tenga que
-> editar un fichero que otro esté tocando.
 
 > **Si cambiáis el esquema**, los ficheros de `postgres/init/` solo se ejecutan
 > cuando el volumen está vacío. Para recargarlos:
@@ -200,8 +180,8 @@ fuera de rango.
 reales), `passenger_count` a cero (2,1% del dataset), distancia cero (1,2%,
 carreras canceladas), duración sospechosa, velocidad imposible, zona 264/265.
 
-No inyectéis suciedad falsa para lo que ya existe: es mejor argumento decir que
-el dataset trae un 3,7% de anomalías reales.
+No se inyecta suciedad falsa para lo que ya existe: el dataset trae un 3,7% de
+anomalías reales.
 
 ---
 
@@ -214,7 +194,7 @@ SELECT * FROM retention_policy;
 ```
 
 Cambiarla es un `UPDATE`, no un redeploy. Para que el archivado se dispare
-durante la grabación del vídeo:
+en la demo:
 
 ```sql
 UPDATE retention_policy SET umbral_valor = 5, umbral_unidad = 'minutes'
@@ -239,7 +219,7 @@ SELECT desalojar_particion('2026-08-12'); -- falla si no está VERIFICADO
 ```
 
 El job que recorre la máquina de estados y la purga del frío viven en
-`archivado/` (P1). Los dos se pueden relanzar cuando se quiera: retoman desde el
+`archivado/`. Los dos se pueden relanzar cuando se quiera: retoman desde el
 estado guardado y no duplican nada.
 
 ```bash
@@ -282,7 +262,7 @@ ahora**, nunca del futuro. Salen de tres sitios:
 |---|---|---|
 | `datos/muestra_1000.csv` | mil viajes reales del portal: semilla y fixture de las pruebas | enero de 2026 (el original era enero de 2020, movido 6 años) |
 | `scripts/generar_datos_sinteticos.py` | el histórico en volumen, para las métricas | de 2026-01-01 hasta ahora; relanzarlo mañana da un día más |
-| `simulador/` (P2) | el flujo en vivo por Kafka | viajes que acaban de terminar |
+| `simulador/` | el flujo en vivo por Kafka | viajes que acaban de terminar |
 
 El generador parte de la muestra y hace cada fila distinta (distancia, duración,
 importes, zonas, pasajeros), conserva las anomalías reales (importes negativos,
@@ -305,6 +285,12 @@ sistema arranca como si llevara funcionando desde enero, y el caliente ya
 tiene días anteriores a hoy que el archivado puede mover en cuanto se baja la
 política. `--recrear` borra la tabla Iceberg y la carga anterior del caliente
 (`origen = 'carga_inicial'`) antes de volver a cargar.
+
+> **El jitter del simulador no es un adorno.** Si amplifica repitiendo
+> las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,
+> porque la codificación por diccionario de Parquet comprime valores idénticos
+> casi a coste cero. Ese 35x es indefendible frente a los benchmarks
+> publicados. Con jitter los números son honestos.
 
 ### Decisiones y por qué
 
@@ -341,121 +327,6 @@ columna.
 
 ---
 
-## Estado y siguientes pasos
-
-| # | Paso | Dueño | Estado |
-|---|---|---|---|
-| 1 | Esqueleto y Docker Compose | — | ✅ |
-| 2 | Esquema de PostgreSQL | — | ✅ |
-| 3 | Contrato de datos | — | ✅ |
-| 4 | Subida a bronze (MinIO) | P1 | ✅ |
-| 5 | Tabla Iceberg y carga inicial | P1 | ✅ |
-| 6 | Simulador con jitter | P2 | ✅ |
-| 7 | Consumidor de Kafka → caliente + cuarentena | P2 | ✅ |
-| 8 | Job de archivado con PyIceberg | P1 | ✅ |
-| 9 | DAGs de Airflow | P4 | ✅ |
-| 10 | API y router de consultas | P3 | ✅ |
-| 11 | Dashboards de Grafana | P4 | ✅ |
-| 12 | Mediciones, memoria y vídeo | todos | pendiente |
-
-Cada paso pendiente está troceado en tareas con dueño, ficheros propios y
-criterio de «hecho» en [`docs/TAREAS.md`](docs/TAREAS.md).
-
-### Estado de la integración
-
-| Bloque | Rama | En `main` | Probado junto al resto |
-|---|---|---|---|
-| **P1** · Almacenamiento y ciclo de vida | `p1/almacenamiento` | ✅ | ✅ |
-| **P2** · Ingesta | `p2/ingesta` | ✅ | ✅ |
-| **P3** · Acceso (API y router) | `p3/api` | ✅ | ✅ |
-| **P4** · Orquestación y observabilidad | `p4/orquestacion` | ✅ | ✅ |
-
-Lo que se ha comprobado con las partes juntas:
-
-- `prueba_humo.py` y `prueba_archivado.py` terminan en `TODO CORRECTO`.
-- **P2 → caliente:** el simulador directo a PostgreSQL mete 20.000 eventos
-  (≈98,9% al caliente y el resto a cuarentena), con `event_time` = ahora, viajes
-  que acaban de terminar (ninguno en el futuro) y miles de importes distintos
-  gracias al jitter.
-- **P2 por Kafka:** 10.000 mensajes emitidos = 10.000 recibidos por el
-  consumidor (caliente + cuarentena), sin duplicados.
-- **P4 → P1:** los cuatro DAGs cargan sin errores y corren en verde. Con la
-  política bajada a 5 minutos, el DAG `archivar` ejecuta el job de P1 y mueve
-  todas las particiones candidatas a Iceberg (`archival_jobs` en `DESALOJADO`,
-  `filas_origen = filas_escritas`), y `estadisticas_frio` actualiza
-  `cold_stats` y `hot_stats`.
-- **Grafana:** el datasource conecta y las 17 consultas del dashboard responden
-  sin error.
-
-- **P3 → todo:** con los datos de 2026, `/trips` devuelve `data_source` `hot`,
-  `cold` o `mixto` según el rango, con su `coverage`, ordenado por
-  `event_time` y la misma forma de fila en los dos tiers. `/stats`,
-  `/metrics/*`, `/lifecycle/status` y `GET/PUT /lifecycle/policy` responden
-  bien (con 400/404/422 cuando toca), y cada llamada queda en `query_log`, así
-  que la gráfica de latencias por tier de Grafana ya tiene datos.
-
-**Frontera del router (arreglado tras la integración):** al principio el
-router cortaba en `NOW() - umbral`, pero el archivado mueve días completos y
-solo cuando pasa el DAG, así que se perdían filas. Ahora decide día a día según
-dónde están los datos (partición existente y no `DESALOJADO`); comprobado que
-`/trips` devuelve exactamente caliente + frío. Ver
-[`docs/ARQUITECTURA.md` §6](docs/ARQUITECTURA.md).
-
-### Poner al día una base que ya teníais creada
-
-Los SQL de P2 y P4 son idempotentes y **no hace falta `down -v`**:
-
-```bash
-docker compose exec -T postgres psql -U pids -d pids < postgres/init/05_p2.sql
-docker compose exec -T postgres psql -U pids -d pids < postgres/init/07_p4.sql
-docker restart pids_grafana     # para que cargue el datasource y el dashboard
-```
-
-Sin `05_p2.sql` el consumidor falla al escribir en cuarentena, y sin
-`07_p4.sql` falla el DAG `estadisticas_frio`.
-
-### Comprobar que todo funciona junto
-
-```bash
-python scripts/prueba_humo.py               # → TODO CORRECTO
-python scripts/prueba_archivado.py          # → TODO CORRECTO
-
-# Ciclo E8 completo a través de Airflow
-docker compose --profile core --profile orch --profile viz up -d
-docker compose exec postgres psql -U pids -d pids -c \
-  "UPDATE retention_policy SET umbral_valor=5, umbral_unidad='minutes' WHERE accion='ARCHIVE';"
-docker compose exec airflow airflow dags trigger archivar
-docker compose exec postgres psql -U pids -d pids -c \
-  "SELECT estado, count(*), sum(filas_origen), sum(filas_escritas) FROM archival_jobs GROUP BY 1;"
-# y en http://localhost:3000 el dashboard «E8 · Ciclo de vida de los datos»
-```
-
-Al acabar, volved a dejar la política en `30` / `days`.
-
-> **Aviso para el vídeo.** Las particiones del caliente son diarias y
-> `particiones_a_archivar()` solo devuelve días **anteriores** al corte. Aunque
-> se baje la política a 5 minutos, lo que el simulador escribe hoy no se
-> archiva hasta mañana. No es un problema si antes se hace la carga inicial con
-> los datos de 2026: deja en el caliente los últimos 30 días, y al bajar la
-> política todos esos días anteriores a hoy se mudan al frío en directo.
-
-> **El jitter del simulador (paso 6) no es un adorno.** Si amplifica repitiendo
-> las mismas 1.000 filas, el ratio de compresión sale 35x en vez de ~7,5x,
-> porque la codificación por diccionario de Parquet comprime valores idénticos
-> casi a coste cero. Ese 35x es indefendible frente a los benchmarks
-> publicados. Con jitter los números son honestos.
-
-> **P2 añade `postgres/init/05_p2.sql`** (índice único que hace idempotente la
-> cuarentena frente a reentregas de Kafka). Es idempotente: sobre una base ya
-> creada basta con
-> `docker compose exec -T postgres psql -U pids -d pids < postgres/init/05_p2.sql`.
-> Sin él, el consumidor falla al escribir en cuarentena.
->
-> Para llenar el caliente rápido, sin Kafka (~3.500 filas/s):
-> `docker compose run --rm simulador python -m simulador.simulador --sumidero postgres --eps 0 --total 1000000`
-
----
-
 ## Problemas frecuentes
 
 ### `Command 'docker' not found` dentro de WSL
@@ -487,10 +358,6 @@ distro sigue viva en segundo plano con el PATH viejo.
 *Apply & Restart*. Con varias distros instaladas, comprobad con `wsl -l -v`
 que la marcada es la que usáis; es fácil activarla en una y trabajar en otra.
 
-> **Usad los cuatro la misma opción**, Docker Desktop o Docker Engine nativo.
-> Si se mezclan, las rutas de volúmenes y los permisos de ficheros se comportan
-> distinto y acabáis depurando problemas que solo le pasan a uno.
-
 ### `pull access denied for minio/mc`
 
 **MinIO archivó su edición community.** El repositorio de GitHub está archivado
@@ -505,13 +372,12 @@ hace lo mismo contra la API S3 y sí está mantenido.
 **La versión está fijada a propósito.** En `RELEASE.2025-05-24` ("Breaking
 Release") MinIO quitó la consola web embebida. Fijamos
 `RELEASE.2025-04-22T22-12-26Z`, la última con el navegador de objetos completo,
-porque es lo que se enseña en el vídeo. **No la subáis a `latest`**: os
-quedaríais sin consola justo al grabar.
+porque se usa para enseñar el bronze y los Parquet del frío. **No la subáis a
+`latest`**: os quedaríais sin consola.
 
 Si `docker pull quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z` también
 fallase, habría que cambiar de almacén S3 (SeaweedFS o Garage son los
-candidatos). Avisad al grupo antes de tocarlo: cambia el paso 5 y la carga a
-Iceberg.
+candidatos). Afectaría a la subida a bronze y a la carga a Iceberg.
 
 ### `pg_config executable not found` al hacer pip install
 
@@ -529,9 +395,8 @@ pip download psycopg2-binary --only-binary=:all: --no-deps -d /tmp/x
 
 Si descarga algo, la solución es subir el pin en `requirements-dev.txt`, no
 cambiar de intérprete. Si de verdad no existe wheel, entonces sí hace falta un
-Python anterior. **Avisad al grupo antes de tocar los pines**: si sube uno, los
-demás tienen que rehacer su venv, y `pandas` 3.x tiene cambios de ruptura
-frente al 2.x, así que quien los suba pasa la prueba de humo antes de commitear.
+Python anterior. Tras subir un pin hay que rehacer el venv, y `pandas` 3.x
+tiene cambios de ruptura frente al 2.x: pasad la prueba de humo después.
 
 ### La API sale `unhealthy` tras reiniciar el PC (`Could not import module "api.app"`)
 

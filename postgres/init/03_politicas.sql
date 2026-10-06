@@ -23,8 +23,8 @@ SELECT crear_particiones_adelanto(7);
 -- ════════════════════════════════════════════════════════════
 -- CÓMO CAMBIAR LA POLÍTICA PARA LA DEMO
 --
--- Con 30 días de retención no se archiva nada durante una grabación de
--- diez minutos. Para que el ciclo se dispare en directo:
+-- Con 30 días de retención no se archiva nada en una demo de unos
+-- minutos. Para que el ciclo se dispare en directo:
 --
 --   UPDATE retention_policy
 --      SET umbral_valor = 5, umbral_unidad = 'minutes'
@@ -36,6 +36,6 @@ SELECT crear_particiones_adelanto(7);
 --      SET umbral_valor = 30, umbral_unidad = 'days'
 --    WHERE dataset = 'trips' AND accion = 'ARCHIVE';
 --
--- Lo mismo se puede hacer desde la API con PUT /lifecycle/policy, que es
--- lo que se graba en el vídeo.
+-- Lo mismo se puede hacer desde la API con PUT /lifecycle/policy o desde
+-- la pestaña Ciclo de vida del frontend.
 -- ════════════════════════════════════════════════════════════

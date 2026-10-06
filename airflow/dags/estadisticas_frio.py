@@ -18,7 +18,7 @@ la foto pasa un ANALYZE: las cifras del caliente salen de reltuples, que
 solo se actualiza al analizar, y sin él v_coste_por_tier y
 v_cumplimiento_politica irían con retraso.
 
-Corre cada cinco minutos para que en el vídeo se vea el frío subir casi
+Corre cada cinco minutos para que en la demo se vea el frío subir casi
 en directo; el DAG archivar lo lanza además al terminar cada mudanza.
 """
 

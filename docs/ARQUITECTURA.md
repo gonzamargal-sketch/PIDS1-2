@@ -1,15 +1,14 @@
 # Arquitectura — PIDS Parte 2
 
-Documento interno del grupo. No se entrega: sirve para que los cuatro sepamos qué estamos
-construyendo, quién hace qué, y por qué cada decisión es la que es.
+El documento de diseño: qué se construye, cómo encajan las piezas y por qué
+cada decisión es la que es.
 
-**Escenario asignado:** E8 — Retención y ciclo de vida de los datos.
-**Dataset:** NYC Yellow Taxi, año 2020 completo (12 ficheros mensuales).
-**Plazo:** 3 semanas. **Equipo:** 4 personas.
-**Entregables:** código funcionando + memoria + vídeo de 5-10 min.
+**Escenario:** E8 — Retención y ciclo de vida de los datos.
+**Dataset:** esquema de NYC Yellow Taxi.
 
-> **Cambio posterior: los datos de trabajo son de 2026.** La muestra de mil
-> viajes se ha movido de enero de 2020 a enero de 2026, el histórico en volumen
+> **Sobre las fechas: los datos de trabajo son de 2026.** El diseño se pensó
+> para el año 2020 del portal, pero la muestra de mil viajes se ha movido de
+> enero de 2020 a enero de 2026, el histórico en volumen
 > lo genera `scripts/generar_datos_sinteticos.py` (del 1 de enero hasta ahora,
 > nunca en el futuro) y el simulador emite viajes que acaban de terminar. La
 > validación acepta recogidas desde 2025-12 hasta «ahora». La carga inicial ya
@@ -21,10 +20,9 @@ construyendo, quién hace qué, y por qué cada decisión es la que es.
 
 ---
 
-## 0. Alcance: fase 1
+## 0. Alcance
 
-Este documento describe la **fase 1**, que es lo que se entrega. Los datos viven solo en dos
-sitios:
+Los datos viven solo en dos sitios:
 
 - **PostgreSQL** — tier caliente.
 - **MinIO + Iceberg** — bronze y tier frío. Las consultas al histórico se hacen sobre Iceberg.
@@ -39,7 +37,7 @@ versión anterior del diseño.
 
 ---
 
-## 1. Decisiones ya cerradas
+## 1. Decisiones
 
 | Tema | Decisión | Por qué |
 |---|---|---|
@@ -50,11 +48,11 @@ versión anterior del diseño.
 | Tier frío | **Iceberg** sobre MinIO, particionado por mes, **ZSTD** | ZSTD ~30-40% menor que Snappy; ideal para datos que se leen poco |
 | Catálogo Iceberg | **SQL catalog** sobre el propio Postgres | Un contenedor menos, sin Hive Metastore |
 | Cómo hablamos con Iceberg | **PyIceberg** (no Spark+Iceberg) | Sin JVM ni JARs. Ver §3.4 |
-| Ingesta | Simulador → **Kafka** → consumidor en Python → Postgres | Kafka es la única entrada en vivo. Decidido en D2 |
+| Ingesta | Simulador → **Kafka** → consumidor en Python → Postgres | Kafka es la única entrada en vivo |
 | Transformaciones y traspasos | **Airflow**: todos los movimientos entre tiers son DAGs | Un solo sitio donde mirar qué se mueve, cuándo y por qué |
 | Orquestación | **Airflow** standalone, 1 contenedor | Los DAGs lucen; el despliegue completo no cabe |
-| Sin Redis, sin Spark, sin Timescale, sin Trino, sin sub-tiers, sin alertas, sin K8s | | Fuera de alcance en 3 semanas |
-| Late-arriving data | Se documenta, no se implementa | Decidido en C6 |
+| Sin Redis, sin Spark, sin Timescale, sin Trino, sin sub-tiers, sin alertas, sin K8s | | Fuera de alcance |
+| Late-arriving data | Se documenta, no se implementa | Fuera de alcance |
 
 ---
 
@@ -153,7 +151,7 @@ verificación es un conteo: filas en Iceberg para esa partición == filas que ha
 Si el DAG se cae en cualquier punto, al reejecutarse retoma desde el estado guardado. Si se
 lanza dos veces seguidas, la segunda no hace nada.
 
-Esto convierte un diseño frágil en uno seguro, y es de lo mejor que podemos contar en la memoria.
+Esto convierte un diseño frágil en uno seguro.
 
 ### 3.3 La política de retención es un dato, no código
 
@@ -180,15 +178,14 @@ Para la demo: `UPDATE retention_policy SET umbral_valor=5, umbral_unidad='minute
 y en cinco minutos empieza a archivarse en directo. Cambiar la política es un UPDATE, no un
 redeploy — que es exactamente como funcionan las lifecycle rules de S3.
 
-**Bonus para la memoria:** cada capa expresa su retención con su mecanismo nativo. PostgreSQL con
+**Cada motor usa su mecanismo nativo:** cada capa expresa su retención con su mecanismo nativo. PostgreSQL con
 `DROP PARTITION` e Iceberg con `expire_snapshots`. No hemos inventado un sistema de retención por
 encima: usamos el que cada motor ya trae y Airflow solo los coordina.
 
 ### 3.4 Por qué PyIceberg y no Spark+Iceberg
 
 Hacer que Spark escriba en Iceberg exige encajar versiones de Spark, Scala,
-`iceberg-spark-runtime`, `hadoop-aws` y el SDK de AWS. Es el punto donde más proyectos se atascan
-y no tenemos tres semanas para pelearnos con JARs.
+`iceberg-spark-runtime`, `hadoop-aws` y el SDK de AWS. Es el punto donde más proyectos se atascan.
 
 PyIceberg es Iceberg en Python puro: mismo formato, mismos snapshots, mismos metadatos, sin
 JVM. Habla con el catálogo SQL sobre nuestro Postgres y con MinIO por S3. A 24M de filas va
@@ -222,15 +219,15 @@ Sin Spark en el stack, todo el proyecto queda en Python y cada pieza hace lo que
 **Total con todo levantado: ~3.6 GB.** Quitar Redis y Spark nos ahorra unos 1,7 GB, que en las
 máquinas de 8 GB es la diferencia entre poder levantarlo todo o no.
 
-### Perfiles de Compose (importante: el mínimo del grupo son 8 GB)
+### Perfiles de Compose (pensados para máquinas de 8 GB)
 
-Nadie necesita levantarlo todo para trabajar en lo suyo:
+No hace falta levantarlo todo para cada cosa:
 
 ```bash
 docker compose --profile core up -d                    # ~1.3 GB, siempre
 docker compose --profile core --profile stream up -d   # trabajar en ingesta
 docker compose --profile core --profile orch up -d     # trabajar en DAGs
-docker compose --profile "*" up -d                     # integración y grabación
+docker compose --profile "*" up -d                     # todo
 ```
 
 En WSL2 hay que configurar `%UserProfile%\.wslconfig` o Docker se queda sin memoria:
@@ -241,9 +238,6 @@ memory=6GB     # con 8 GB de RAM física
 processors=4
 swap=4GB
 ```
-
-Quien tenga 32 GB pone `memory=16GB` y levanta todo. **La integración final y la grabación del
-vídeo se hacen en esa máquina.**
 
 ---
 
@@ -353,89 +347,10 @@ Sin números medidos no hemos demostrado E8. Estas son las seis, y todas acaban 
 
 ---
 
-## 8. Reparto (4 personas)
-
-Cada uno es dueño de un bloque; las interfaces entre bloques son las tablas y los topics, que
-se acuerdan el día 2 y no se tocan.
-
-**P1 — Almacenamiento y ciclo de vida** *(el corazón de E8)*
-Esquema de Postgres particionado, `retention_policy`, `archival_jobs` y su máquina de estados,
-tabla Iceberg con PyIceberg, el job de archivado y el de purga.
-
-**P2 — Ingesta**
-Kafka en KRaft, el simulador (replay con reloj desplazado, ritmo configurable, inyección de
-sucios), el consumidor de Kafka en Python, escritura a Postgres y cuarentena.
-
-**P3 — Acceso**
-FastAPI, el router de consultas sobre Postgres e Iceberg, el contrato con `data_source`,
-instrumentación de latencias en `query_log`.
-
-**P4 — Orquestación, observabilidad e integración**
-Airflow y sus DAGs (todas las transformaciones y traspasos), Grafana y los dashboards,
-`docker-compose.yml` con perfiles, las mediciones de §7, y coordinar el vídeo.
-
-La memoria se reparte al final: cada uno escribe su bloque.
-
----
-
-## 9. Calendario
-
-### Semana 1 — Que exista
-
-| Día | Qué |
-|---|---|
-| 1-2 | Repo, `docker-compose.yml` con `core`, esquema de Postgres, acordar interfaces |
-| 3 | Descargar los 12 ficheros de 2020 a MinIO bronze |
-| 4-5 | Carga inicial bronze → Iceberg con PyIceberg. Kafka arriba. API leyendo ambos tiers |
-
-**Hito:** `docker compose up` funciona y hay 24M de filas consultables en el tier frío.
-
-### Semana 2 — Que se mueva
-
-| Día | Qué |
-|---|---|
-| 6-8 | Simulador + consumidor de Kafka → Postgres. Cuarentena funcionando |
-| 9-10 | Job de archivado con la máquina de estados. Política como datos |
-| 11-12 | Airflow con los cuatro DAGs. Router de consultas completo |
-
-**Hito:** se baja el umbral a 5 minutos y se ve una partición pasar de caliente a frío.
-
-### Semana 3 — Que se demuestre
-
-| Día | Qué |
-|---|---|
-| 13-15 | Grafana, las seis métricas, instrumentación de latencias |
-| 16-18 | Memoria, guion del vídeo, grabación |
-| 19-21 | **Colchón.** No se programa nada nuevo |
-
-> La semana 3 **no es para añadir funcionalidad**. Es para medir, pulir y entregar. Ese margen
-> es lo que separa un proyecto que se entrega bien de uno que se entrega a medias.
-
----
-
-## 10. El vídeo (5-10 min)
-
-Al ser grabado y no en directo, podemos repetir tomas y preparar el estado del sistema antes.
-Guion propuesto, ~7:30:
-
-| Tiempo | Qué se ve |
-|---|---|
-| 0:00-0:30 | El diagrama de §2. Qué problema resuelve E8 |
-| 0:30-1:30 | `docker compose up`, servicios arrancando, MinIO con el bronze cargado |
-| 1:30-2:30 | El simulador emitiendo → Kafka → consumidor → filas apareciendo en Postgres, con Grafana actualizándose en vivo |
-| 2:30-4:30 | **El momento clave.** `PUT /lifecycle/policy` baja el umbral a 5 min. Se dispara el DAG en Airflow. Se ve la partición pasar por los estados, el conteo del caliente bajar y el del frío subir, todo en Grafana |
-| 4:30-6:00 | El router: una consulta solo-caliente (rápida), una solo-fría (lenta), una que cruza la frontera. Se enseña el `data_source` y el `coverage` de cada respuesta |
-| 6:00-7:00 | Los números: bytes por fila en cada tier, ratio de compresión, percentiles de latencia frente a los SLAs |
-| 7:00-7:30 | Cierre: la política como dato, y que cada capa usa su mecanismo nativo de retención |
-
----
-
-## 11. Riesgos reales
+## 8. Riesgos y mitigaciones
 
 **Kafka en 8 GB.** Es lo más pesado del stack. Sin Spark ni Redis el total baja a ~3,6 GB, pero
-Kafka sigue pidiendo 1 GB. Mitigación: perfiles de Compose y `.wslconfig` bien puesto. Si aun así
-no cabe en la máquina de alguien, esa persona trabaja con `core` y prueba la ingesta en la
-máquina grande.
+Kafka sigue pidiendo 1 GB. Mitigación: perfiles de Compose y `.wslconfig` bien puesto.
 
 **El consumidor en Python tiene que aguantar el ritmo.** Sin Spark, el paso de Kafka a Postgres
 depende de un proceso Python. Mitigación: insertar por lotes (`execute_values`, `page_size` de
@@ -456,51 +371,3 @@ a la carga a Iceberg, no al resto de la arquitectura.
 **El simulador y el reloj.** Es donde más fácil es liarse. Mitigación: la separación de
 `event_time` y `tpep_pickup_datetime` (§3.1) tiene que estar clara antes de escribir una línea,
 y las dos columnas se llevan a Kafka desde el primer mensaje.
-
-**Que llegue la semana 3 sin nada medido.** El riesgo más probable. Mitigación: `query_log` y
-`cold_stats` se crean en la semana 1, aunque estén vacías. Si la instrumentación existe desde el
-principio, las métricas salen solas.
-
----
-
-## 12. Nota sobre los datos: 2020 es un año raro
-
-El dataset tiene el desplome del COVID. Del orden de 6,4 millones de viajes en enero y febrero,
-y luego abril se queda en unos cientos de miles. Una caída de más del 95%.
-
-**No lo escondáis: aprovechadlo.** Da una historia visual potentísima en Grafana y permite hablar
-en la memoria de cómo la arquitectura se comporta ante volúmenes muy desiguales — particiones
-mensuales que van de gigas a megas, y qué implica eso para el particionado y el tamaño de fichero.
-
----
-
-## 13. Checklist
-
-**Semana 1**
-- [ ] Repo creado, estructura de carpetas, `.gitignore`
-- [ ] `docker-compose.yml` con perfil `core` levantando
-- [ ] Esquema de Postgres con particionado por día
-- [ ] `retention_policy`, `archival_jobs`, `cold_stats`, `query_log` creadas
-- [ ] 12 ficheros de 2020 en MinIO bronze
-- [ ] Tabla Iceberg creada con catálogo SQL
-- [ ] Carga inicial bronze → Iceberg completada
-- [ ] API básica leyendo de ambos tiers
-
-**Semana 2**
-- [ ] Kafka en KRaft, topic `trips.raw`
-- [ ] Simulador con reloj desplazado y ritmo configurable
-- [ ] Inyección de registros sucios con porcentaje configurable
-- [ ] Consumidor de Kafka → Postgres + cuarentena
-- [ ] DAG de archivado con máquina de estados
-- [ ] DAG de creación de particiones futuras
-- [ ] DAG de `cold_stats`
-- [ ] DAG de purga final
-- [ ] Router de consultas con `data_source` y `coverage`
-
-**Semana 3**
-- [ ] Datasource de Grafana (Postgres)
-- [ ] Dashboard de ciclo de vida
-- [ ] Dashboard de latencias frente a SLAs
-- [ ] Las seis métricas de §7 medidas y capturadas
-- [ ] Memoria escrita
-- [ ] Vídeo grabado
