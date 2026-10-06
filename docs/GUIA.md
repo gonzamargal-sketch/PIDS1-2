@@ -24,8 +24,7 @@ pip install -r requirements-dev.txt
 Si ya tenéis el repo: `git checkout main && git pull`, y en cada terminal
 nueva `source .venv/bin/activate`.
 
-Requisitos: Docker funcionando (ver *Problemas frecuentes* en el
-[README](../README.md)) y Python 3.11 o superior.
+Requisitos: Docker funcionando (con Compose v2) y Python 3.11 o superior.
 
 ---
 
@@ -130,7 +129,7 @@ alias pg='docker compose exec -T postgres psql -U pids -d pids -c'
 |---|---|
 | `docker compose ps -a` | Todo `Up (healthy)`, salvo `pids_minio_init` en `Exited (0)` (crea los buckets y termina) |
 | `curl -s localhost:8000/health` | `{"estado":"ok"}` |
-| `pg "SELECT count(*) FROM taxi_trips_default;"` | `0`. Si hay filas, llegaron datos de días sin partición: ver *Problemas frecuentes* del README |
+| `pg "SELECT count(*) FROM taxi_trips_default;"` | `0`. Si hay filas, llegaron datos de días sin partición: se crean con `pg "SELECT crear_particiones_adelanto(7);"` |
 
 ### 5.2 Almacenamiento y carga
 
