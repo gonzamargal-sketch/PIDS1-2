@@ -118,7 +118,7 @@ def _estado(conn: PGConnection) -> dict:
             conn.rollback()
             raise HTTPException(
                 503, "Falta la tabla simulador_control: aplicad postgres/init/08_p3.sql "
-                     "(ver «Poner al día una base existente» en docs/GUIA.md).")
+                     "(docker compose exec -T postgres psql -U pids -d pids < postgres/init/08_p3.sql).")
         f = cur.fetchone()
     if f is None:
         raise HTTPException(503, "simulador_control está vacía: volved a aplicar postgres/init/08_p3.sql.")
