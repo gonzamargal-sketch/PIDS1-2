@@ -65,5 +65,8 @@ export const api = {
     llamar("PUT", "/lifecycle/policy?" + qs({ accion }), { umbral_valor, umbral_unidad }),
   estado: () => llamar("GET", "/lifecycle/status"),
   ingesta: (ventana, paso, opciones) => llamar("GET", "/ingesta?" + qs({ ventana, paso }), undefined, opciones),
+  simulador: (opciones) => llamar("GET", "/simulador", undefined, opciones),
+  cambiarSimulador: (activo) => llamar("PUT", "/simulador", { activo }),
+  muestras: () => llamar("POST", "/ingesta/muestras", {}),
   metrica: (nombre) => llamar("GET", `/metrics/${encodeURIComponent(nombre)}`),
 };

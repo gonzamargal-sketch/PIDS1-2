@@ -28,10 +28,8 @@ from __future__ import annotations
 
 import sys
 import json
-import uuid
 import argparse
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
@@ -41,33 +39,11 @@ from common.config import PG             # noqa: E402
 
 
 def construir(a: argparse.Namespace) -> dict:
-    ahora = datetime.now(timezone.utc)
-    bajada = ahora.replace(tzinfo=None, microsecond=0)
-    subida = bajada - timedelta(minutes=a.minutos)
-    return {
-        "trip_id": str(uuid.uuid4()),
-        "event_time": ahora.isoformat(),
-        "tpep_pickup_datetime": subida.isoformat(),
-        "tpep_dropoff_datetime": bajada.isoformat(),
-        "vendor_id": 2,
-        "passenger_count": a.pasajeros,
-        "trip_distance": a.distancia,
-        "ratecode_id": 1,
-        "store_and_fwd_flag": "N",
-        "pu_location_id": a.zona_origen,
-        "do_location_id": a.zona_destino,
-        "payment_type": a.pago,
-        "fare_amount": a.importe,
-        "extra": 0.0,
-        "mta_tax": 0.5,
-        "tip_amount": a.propina,
-        "tolls_amount": 0.0,
-        "improvement_surcharge": 0.3,
-        "total_amount": round(a.importe + a.propina + 0.8, 2),
-        "congestion_surcharge": 2.5,
-        "esquema_version": "1.0",
-        "fichero_origen": "anadir_viaje.py",
-    }
+    return mensajes.viaje_manual(
+        distancia=a.distancia, minutos=a.minutos, importe=a.importe,
+        propina=a.propina, pasajeros=a.pasajeros, pago=a.pago,
+        zona_origen=a.zona_origen, zona_destino=a.zona_destino,
+    )
 
 
 def main() -> int:

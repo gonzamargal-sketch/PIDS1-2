@@ -38,7 +38,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import psycopg2.extras
@@ -128,6 +128,44 @@ def a_dataframe(mensajes: list[dict]) -> pd.DataFrame:
         s = pd.to_datetime(df[c], format="ISO8601", errors="coerce")
         df[c] = s.dt.tz_localize(None) if getattr(s.dt, "tz", None) is not None else s
     return esquema.aplicar_tipos(df)
+
+
+def viaje_manual(distancia: float = 2.5, minutos: float = 12, importe: float = 14.0,
+                 propina: float = 3.0, pasajeros: int = 1, pago: int = 1,
+                 zona_origen: int = 161, zona_destino: int = 236,
+                 fichero_origen: str = "anadir_viaje.py") -> dict:
+    """Un mensaje con un viaje que "acaba de terminar" (event_time = ahora).
+
+    Lo usan scripts/anadir_viaje.py y el botón de muestras del frontend
+    (POST /ingesta/muestras), para que los dos construyan el viaje igual.
+    """
+    ahora = datetime.now(timezone.utc)
+    bajada = ahora.replace(tzinfo=None, microsecond=0)
+    subida = bajada - timedelta(minutes=minutos)
+    return {
+        "trip_id": str(uuid.uuid4()),
+        "event_time": ahora.isoformat(),
+        "tpep_pickup_datetime": subida.isoformat(),
+        "tpep_dropoff_datetime": bajada.isoformat(),
+        "vendor_id": 2,
+        "passenger_count": pasajeros,
+        "trip_distance": distancia,
+        "ratecode_id": 1,
+        "store_and_fwd_flag": "N",
+        "pu_location_id": zona_origen,
+        "do_location_id": zona_destino,
+        "payment_type": pago,
+        "fare_amount": importe,
+        "extra": 0.0,
+        "mta_tax": 0.5,
+        "tip_amount": propina,
+        "tolls_amount": 0.0,
+        "improvement_surcharge": 0.3,
+        "total_amount": round(importe + propina + 0.8, 2),
+        "congestion_surcharge": 2.5,
+        "esquema_version": "1.0",
+        "fichero_origen": fichero_origen,
+    }
 
 
 # ─────────────────────────────────────────────────────────────

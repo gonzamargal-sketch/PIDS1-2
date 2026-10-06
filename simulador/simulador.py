@@ -54,6 +54,7 @@ from common import esquema
 from common.config import SIMULADOR
 
 from . import jitter
+from .control import Control
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -168,11 +169,19 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Emitiendo a '%s' · %s ev/s · total=%s · jitter=%s · suciedad extra=%.1f%%",
              args.sumidero, args.eps or "máx", args.total or "∞", con_jitter, args.pct_suciedad)
 
+    # El interruptor del frontend solo manda en el simulador sin fin
+    control = Control(args.eps, args.sumidero) if args.total == 0 else None
+
     emitidos = 0
     inicio = ultimo_log = time.monotonic()
     siguiente = inicio
     try:
         while not parar and (args.total == 0 or emitidos < args.total):
+            if control and not control.encendido(emitidos):
+                time.sleep(0.25)
+                siguiente = time.monotonic()   # al encender, sin ráfaga de recuperación
+                continue
+
             if args.eps > 0:
                 n = max(1, round(args.eps * TICK_S))
             else:
@@ -199,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
                     siguiente = time.monotonic()   # vamos tarde: no acumular deuda
     finally:
         sumidero.cerrar()
+        if control:
+            control.cerrar()
         dur = time.monotonic() - inicio
         log.info("FIN: %d eventos emitidos en %.1f s (%.0f ev/s)",
                  emitidos, dur, emitidos / dur if dur else 0)

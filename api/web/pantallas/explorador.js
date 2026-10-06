@@ -52,6 +52,13 @@ const RUTAS = [
     campos: [{ n: "ventana", tipo: "number", v: () => 300 }, { n: "paso", tipo: "number", v: () => 5 }],
     construir: (c) => ({ ruta: "/ingesta?" + new URLSearchParams(c) }),
   },
+  { id: "muestras", metodo: "POST", ruta: "/ingesta/muestras", desc: "Mete 8 viajes de ejemplo (uno por cada salida del contrato) y dice dónde acaba cada uno", campos: [], construir: () => ({ ruta: "/ingesta/muestras", cuerpo: {} }) },
+  { id: "sim-get", metodo: "GET", ruta: "/simulador", desc: "Si el simulador está encendido y si está levantado (latido de menos de 5 s)", campos: [] },
+  {
+    id: "sim-put", metodo: "PUT", ruta: "/simulador", desc: "Enciende o apaga el simulador sin parar el contenedor",
+    campos: [{ n: "activo", tipo: "select", opciones: ["true", "false"], v: () => "true" }],
+    construir: (c) => ({ ruta: "/simulador", cuerpo: { activo: c.activo === "true" } }),
+  },
   {
     id: "metrics", metodo: "GET", ruta: "/metrics/{nombre}", desc: "Una vista de métricas de PostgreSQL",
     campos: [{ n: "nombre", tipo: "select", opciones: ["coste", "latencia", "calidad", "caliente", "noexiste"], v: () => "coste" }],

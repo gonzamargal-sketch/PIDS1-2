@@ -40,7 +40,7 @@ router = APIRouter(tags=["ingesta"])
 MAX_INTERVALOS = 300
 ULTIMOS_VIAJES = 8
 ULTIMOS_RECHAZOS = 6
-A_MANO = 6
+A_MANO = 10   # caben las 8 muestras del botón del frontend
 # Ventana para el ritmo "ahora": más corta que la gráfica, pero bastante
 # larga para no depender de en qué segundo cayó cada lote del consumidor
 SEGUNDOS_RITMO = 10

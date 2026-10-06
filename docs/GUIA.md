@@ -5,9 +5,10 @@ funciona y ver el ciclo de vida de E8 en marcha. **Es la guía viva del
 grupo**: se actualiza cada vez que entra una parte nueva o cambia cómo se hace
 algo.
 
-> **Última actualización:** 2026-10-05 · Guion del vídeo de 60-90 s y cómo
-> montarlo en Recordly ([paso 9](#9-guion-del-vídeo-60-90-s)). Pestaña
-> **En vivo** del frontend (ingesta en directo, [5.8](#58-frontend-web-p3)). Antes: chatbot de la Parte 3 (perfil
+> **Última actualización:** 2026-10-05 · Botones en la pestaña **En vivo**:
+> encender y apagar el simulador y meter viajes de ejemplo
+> ([5.8](#58-frontend-web-p3)). Guion del vídeo de 60-90 s y cómo montarlo en
+> Recordly ([paso 9](#9-guion-del-vídeo-60-90-s)). Antes: chatbot de la Parte 3 (perfil
 > `chat`, [paso 8](#8-chatbot-parte-3)) y frontend web de la API en
 > `localhost:8000/app/` ([5.8](#58-frontend-web-p3)). El
 > [paso 5](#5-comprobar-que-todo-funciona) es para **comprobar** que todo
@@ -115,7 +116,8 @@ a Kafka. El consumidor los valida y los escribe en el caliente o en
 cuarentena. Cada viaje "acaba de terminar": `event_time` y la fecha del viaje
 son de ahora.
 
-Para parar solo el simulador: `docker compose stop simulador`.
+Para parar solo el simulador: botón **Apagar** en la pestaña **En vivo** del
+frontend ([5.8](#58-frontend-web-p3)), o `docker compose stop simulador`.
 
 ---
 
@@ -191,7 +193,8 @@ Kafka guardó los mensajes mientras estaba parado. En la pestaña **En vivo** de
 frontend se ve sin comandos: el hueco, el pico al volver y el retraso subiendo y
 bajando.
 
-Para parar solo el simulador: `docker compose stop simulador`. El contador de
+Para parar solo el simulador: botón **Apagar** de la pestaña En vivo, o
+`docker compose stop simulador`. El contador de
 `stream` deja de subir.
 
 ### 5.4 P4 · Orquestación (Airflow)
@@ -255,6 +258,12 @@ consulta y otra.
 
 **Para verlo sin curl:** el frontend ([5.8](#58-frontend-web-p3)).
 
+**Las únicas rutas que escriben viajes** son las de los botones de En vivo:
+`POST /ingesta/muestras` (8 viajes de ejemplo, por el mismo contrato de
+datos) y `PUT /simulador` con `{"activo": false}` o `true`. Apagar el
+simulador no para el contenedor: cambia una fila (`simulador_control`) que el
+simulador mira cada segundo.
+
 Toda respuesta que toca datos lleva `data` + `meta` (`data_source`,
 `coverage`, `as_of`, `latency_ms`, `rows`), y cada llamada deja una fila en
 `query_log`, que es de donde salen las latencias por tier de Grafana.
@@ -296,7 +305,7 @@ la página. Solo usa las rutas de siempre; no tiene lógica propia.
 
 | Pestaña | Rutas que usa | Qué probar | Tiene que salir |
 |---|---|---|---|
-| **En vivo** | `/ingesta` | Abrirla con el perfil `stream` levantado; meter un viaje con `anadir_viaje.py` (7.1, 7.2); parar y arrancar el consumidor | Ritmo en torno a 200/s, último viaje llegado hace < 2 s y retraso **al día**. El viaje metido, en «Metido a mano» con su destino. Con el consumidor parado: barras a cero y **parado**; al arrancarlo, un pico de llegadas y el retraso sube y vuelve a ~0 |
+| **En vivo** | `/ingesta`, `/simulador` (GET y PUT), `/ingesta/muestras` | Abrirla con el perfil `stream` levantado; **Apagar** y **Encender** el simulador; **Meter muestras**; parar y arrancar el consumidor | Ritmo en torno a 200/s, último viaje llegado hace < 2 s y retraso **al día**. Al apagar, en un segundo el ritmo cae a 0 y sale **parado**; al encender, vuelve. «Meter muestras» dice 4 al caliente y 4 a cuarentena, y las 8 salen en «Metido a mano» con su motivo. Con el consumidor parado: barras a cero; al arrancarlo, un pico de llegadas y el retraso sube y vuelve a ~0 |
 | **Inicio** | `/stats`, `/lifecycle/*`, `/metrics/coste`, `/metrics/calidad` | Abrirla | El recorrido entrada → caliente → frío → borrado con las filas de cada tier, cumplimiento **OK** y el frío ocupando varias veces menos por fila |
 | **Viajes** | `/trips` | Rango rápido «Cruzando la frontera» | Origen **mixto**, la barra de tramos con frío y caliente tocándose a las 00:00, el histograma en dos colores y cada viaje con su etiqueta de tier |
 | **Ciclo de vida** | `/lifecycle/policy` (GET y PUT), `/lifecycle/status` | «Demo: 5 minutos» (pide confirmación) | «N particiones pasan a estar pendientes»; en ≤ 5 min la máquina de estados las mueve a `DESALOJADO` sola (se refresca cada 5 s). **Al acabar, «Volver a 30 días»** |
@@ -382,6 +391,10 @@ qué hacer y dónde se ve el efecto. Si no dice lo contrario, se puede repetir y
 no rompe nada.
 
 ### 7.1 Añadir un viaje a mano
+
+**Sin terminal:** pestaña **En vivo** → **Meter muestras**. Mete 8 viajes, uno
+por cada salida del contrato (los de la tabla de abajo), y dice dónde ha
+acabado cada uno.
 
 ```bash
 python scripts/anadir_viaje.py                                    # un viaje normal
@@ -686,7 +699,7 @@ Lo que queda en el vídeo final. Los tiempos son orientativos; para dejarlo en
 | Tiempo | Plano | Qué se ve | Voz / texto en pantalla |
 |---|---|---|---|
 | 0:00-0:08 | Frontend · **Inicio** | El recorrido entrada → caliente → frío → borrado, con las filas de cada tier | «Los viajes de taxi entran calientes en PostgreSQL y a los 30 días pasan al frío, en Iceberg» |
-| 0:08-0:20 | **En vivo** | Ritmo, «llegando», la gráfica avanzando y el panel «Metido a mano» con un viaje en caliente y dos en cuarentena | «Llegan en tiempo real por Kafka. Lo que no cumple el contrato de datos va a cuarentena» |
+| 0:08-0:20 | **En vivo** | Ritmo, «llegando», la gráfica avanzando; clic en **Meter muestras** y el panel «Metido a mano» con 4 en caliente y 4 en cuarentena, cada uno con su motivo | «Llegan en tiempo real por Kafka. Lo que no cumple el contrato de datos va a cuarentena» |
 | 0:20-0:35 | **En vivo**, ventana «1 min» | Las barras a cero y **parado**; después el pico y el retraso subiendo y bajando | «Si se cae el consumidor, Kafka guarda los mensajes. Al volver se pone al día sin perder ni duplicar» |
 | 0:35-0:47 | **Viajes** · «Cruzando la frontera» *(cortable)* | Origen **mixto**, la barra de tramos y el histograma en dos colores | «Una consulta que cruza la frontera lee de los dos tiers y junta el resultado» |
 | 0:47-0:55 | **Ciclo de vida** · «Demo: 5 minutos» | «N particiones pasan a estar pendientes» | «Bajamos la política a 5 minutos, sin tocar código» |
@@ -720,17 +733,8 @@ Y justo antes de grabar:
   `mantener_particiones` → ▶).
 - [ ] **No grabéis cerca de las 02:00 hora española** (medianoche UTC): cambia
   el día y se mueven las particiones a mitad de toma.
-- [ ] **Llenar «Metido a mano»**, que en el vídeo no da tiempo a teclear (dura
-  una hora):
-
-  ```bash
-  python scripts/anadir_viaje.py --json --distancia 7 --importe 31 | \
-    docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
-    --bootstrap-server localhost:9092 --topic trips.raw
-  echo 'esto no es json' | docker compose exec -T kafka \
-    /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic trips.raw
-  python scripts/anadir_viaje.py --distancia 600
-  ```
+- [ ] En **En vivo**, el simulador **encendido**. «Metido a mano» se llena en
+  la toma con el botón **Meter muestras**.
 
 - [ ] **Pausar `archivar`** en Airflow, para que no se adelante a la toma.
 - [ ] Navegador: ventana a **1920×1080**, zoom **125 %** (que se lean los
@@ -744,7 +748,8 @@ No pasa nada por ir despacio o repetir un clic: en el montaje se corta. Dejad
 **2-3 segundos quietos** en cada plano, que es lo que luego se usa.
 
 1. **Inicio**: pasad el ratón por los tres tiers.
-2. **En vivo**: dejadla correr unos segundos. Bajad hasta «Metido a mano».
+2. **En vivo**: dejadla correr unos segundos. Pulsad **Meter muestras** y
+   bajad hasta «Metido a mano».
 3. **En vivo** → ventana **«1 min»**. En Docker Desktop, **Stop** en
    `pids_consumidor`. Esperad a que salga **parado** (~30 s). **Start**.
    Esperad a que pase el pico y el retraso vuelva a ~0.
@@ -806,7 +811,7 @@ información* → *Ejecutar de todas formas*.
 ### 9.5 Después de grabar
 
 ```bash
-docker compose stop simulador                 # que el caliente no siga creciendo
+docker compose stop simulador                 # que el caliente no siga creciendo (o «Apagar» en En vivo)
 ```
 
 - Devolved `SIMULADOR_EVENTOS_POR_SEGUNDO=200` en `.env` si queréis el valor
@@ -835,7 +840,8 @@ nuevos. Son idempotentes y no borran nada:
 ```bash
 docker compose exec -T postgres psql -U pids -d pids < postgres/init/05_p2.sql
 docker compose exec -T postgres psql -U pids -d pids < postgres/init/07_p4.sql
-docker compose exec -T postgres psql -U pids -d pids < postgres/init/08_p3.sql   # índice de la pestaña En vivo
+docker compose exec -T postgres psql -U pids -d pids < postgres/init/08_p3.sql   # pestaña En vivo: índices e interruptor
+docker compose restart simulador   # si estaba levantado: carga el interruptor (perfil stream)
 docker restart pids_grafana     # para que cargue el datasource y el dashboard
 ```
 
